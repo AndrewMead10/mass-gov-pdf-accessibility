@@ -68,6 +68,21 @@ def update_document_results(db: Session, document_id: int,
         db.refresh(document)
     return document
 
+
+def update_document_filename(
+    db: Session,
+    document_id: int,
+    *,
+    filename: str,
+) -> Optional[PDFDocument]:
+    """Persist a new display filename for a document."""
+    document = get_pdf_document(db, document_id)
+    if document:
+        document.filename = filename
+        db.commit()
+        db.refresh(document)
+    return document
+
 def delete_pdf_document(db: Session, document_id: int) -> bool:
     document = get_pdf_document(db, document_id)
     if document:

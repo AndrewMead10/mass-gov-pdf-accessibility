@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 import os
 import threading
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from app.database import get_db
@@ -19,6 +20,7 @@ router = APIRouter()
 # Default pool size can be overridden via PAGE_PROCESSING_WORKERS env var
 PAGE_WORKER_FALLBACK = 8
 PIPELINE_OUTPUT_ROOT = os.path.join("output_pdfs", "pipelines")
+FILENAME_PIPELINE_SLUG = "filename-from-h1"
 
 
 def _resolve_worker_count(total_pages: int) -> int:
@@ -92,6 +94,23 @@ def _derive_pipeline_status(result: PipelineRunResult, attempt_resolve: bool) ->
     if attempt_resolve and result.resolve and result.identify.has_findings():
         return PipelineRunStatus.PARTIAL
     return PipelineRunStatus.FAILED
+
+
+def _extract_filename_suggestion(result: PipelineRunResult) -> Optional[str]:
+    """Return the suggested filename from a pipeline run when available."""
+    if not result.resolve:
+        return None
+
+    for change in result.resolve.change_log:
+        suggested = change.annotations.get("suggested_filename") if change.annotations else None
+        if suggested:
+            return os.path.basename(suggested)
+
+    resolved_path = result.resolve.resolved_pdf_path
+    if resolved_path:
+        return Path(resolved_path).name
+
+    return None
 
 def process_pdf_background(document_id: int, db_url: str, credentials_file: str = None):
     """Background task to process PDF"""
@@ -179,6 +198,9 @@ def process_pdf_background(document_id: int, db_url: str, credentials_file: str 
         manager = PipelineManager(ManagerConfig(attempt_resolve=attempt_resolve))
         pipeline_results = manager.run(pipeline_context)
 
+        original_display_name = os.path.basename(document.original_filename) if document.original_filename else None
+        chosen_display_name = original_display_name or document.filename
+
         for result in pipeline_results:
             identify_payload = {
                 "summary": result.identify.summary,
@@ -222,6 +244,22 @@ def process_pdf_background(document_id: int, db_url: str, credentials_file: str 
             )
 
             crud.finalize_pipeline_run(db, run_row)
+
+            if result.identify.pipeline_slug == FILENAME_PIPELINE_SLUG:
+                if not result.identify.findings:
+                    chosen_display_name = original_display_name or chosen_display_name
+                else:
+                    suggestion = _extract_filename_suggestion(result)
+                    if suggestion:
+                        chosen_display_name = suggestion
+
+        if chosen_display_name and chosen_display_name != document.filename:
+            crud.update_document_filename(
+                db=db,
+                document_id=document_id,
+                filename=chosen_display_name,
+            )
+            document.filename = chosen_display_name
 
     except Exception as e:
         crud.update_document_status(

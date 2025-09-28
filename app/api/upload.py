@@ -27,9 +27,13 @@ async def upload_pdfs(
         if not file.filename.lower().endswith('.pdf'):
             raise HTTPException(status_code=400, detail=f"File {file.filename} is not a PDF")
 
-        # Generate unique filename
         file_id = str(uuid.uuid4())
-        file_extension = os.path.splitext(file.filename)[1]
+        original_filename = os.path.basename(file.filename) or file.filename
+        if not original_filename:
+            original_filename = f"{file_id}.pdf"
+
+        # Generate unique filename for storage to avoid collisions
+        file_extension = os.path.splitext(original_filename)[1] or ".pdf"
         unique_filename = f"{file_id}{file_extension}"
         file_path = os.path.join(upload_dir, unique_filename)
 
@@ -39,8 +43,8 @@ async def upload_pdfs(
 
         # Create database record
         pdf_document = PDFDocumentCreate(
-            filename=unique_filename,
-            original_filename=file.filename,
+            filename=original_filename,
+            original_filename=original_filename,
             file_path=file_path
         )
 
