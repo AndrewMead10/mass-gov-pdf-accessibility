@@ -110,6 +110,7 @@ The app now includes a pipeline framework under `app/pipelines` that layers on t
 - `app/pipelines/helpers.py` contains shared utilities for reading PDFs, walking the Adobe report, and serialising findings.
 - `app/pipelines/__init__.py` automatically discovers any subclasses of `BasePipeline` placed in the `app/pipelines` package.
 - `app/pipelines/manager.py` exposes `PipelineManager`, which orchestrates running all registered pipelines and handling optional resolve steps.
+- Each pipeline module begins with concise "Check / Why / Resolve" comments so reviewers understand the intent and any automated remediation at a glance.
 
 ### Implementing a pipeline
 
