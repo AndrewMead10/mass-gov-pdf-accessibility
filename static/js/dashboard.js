@@ -131,21 +131,8 @@ function dashboardHandler() {
 
         async downloadPDF(documentId) {
             try {
-                const response = await fetch(`/api/download/${documentId}`);
-                if (!response.ok) {
-                    throw new Error('Failed to download PDF');
-                }
-
-                const blob = await response.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `tagged_document_${documentId}.pdf`;
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-                window.URL.revokeObjectURL(url);
-
+                // Use window.open to let the browser handle the download with server-provided filename
+                window.open(`/api/download/${documentId}`);
                 showNotification('Download started', 'success');
             } catch (error) {
                 console.error('Download failed:', error);
