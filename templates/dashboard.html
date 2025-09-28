@@ -92,18 +92,53 @@
                     </div>
 
                     <!-- Summary Stats -->
-                    <div x-show="document.status === 'completed'" class="mt-4 grid grid-cols-3 gap-4">
-                        <div class="text-center p-3 bg-red-50 rounded">
-                            <div class="text-2xl font-bold text-red-600" x-text="document.total_failed"></div>
-                            <div class="text-sm text-red-800">Failed</div>
+                    <div x-show="document.status === 'completed'" class="mt-4 space-y-6">
+                        <!-- Adobe Accessibility Analysis -->
+                        <div>
+                            <h4 class="text-sm font-medium text-gray-700 mb-3 flex items-center">
+                                <svg class="w-4 h-4 mr-2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                                </svg>
+                                Adobe Accessibility Analysis
+                            </h4>
+                            <div class="grid grid-cols-3 gap-4">
+                                <div class="text-center p-3 bg-red-50 rounded border">
+                                    <div class="text-2xl font-bold text-red-600" x-text="document.total_failed"></div>
+                                    <div class="text-sm text-red-800">Failed</div>
+                                </div>
+                                <div class="text-center p-3 bg-yellow-50 rounded border">
+                                    <div class="text-2xl font-bold text-yellow-600" x-text="document.needs_manual_check"></div>
+                                    <div class="text-sm text-yellow-800">Manual Check</div>
+                                </div>
+                                <div class="text-center p-3 bg-green-50 rounded border">
+                                    <div class="text-2xl font-bold text-green-600" x-text="document.total_passed"></div>
+                                    <div class="text-sm text-green-800">Passed</div>
+                                </div>
+                            </div>
                         </div>
-                        <div class="text-center p-3 bg-yellow-50 rounded">
-                            <div class="text-2xl font-bold text-yellow-600" x-text="document.needs_manual_check"></div>
-                            <div class="text-sm text-yellow-800">Manual Check</div>
-                        </div>
-                        <div class="text-center p-3 bg-green-50 rounded">
-                            <div class="text-2xl font-bold text-green-600" x-text="document.total_passed"></div>
-                            <div class="text-sm text-green-800">Passed</div>
+
+                        <!-- Automated Pipeline Results -->
+                        <div>
+                            <h4 class="text-sm font-medium text-gray-700 mb-3 flex items-center">
+                                <svg class="w-4 h-4 mr-2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                                </svg>
+                                Automated Pipeline Results
+                            </h4>
+                            <div class="grid grid-cols-3 gap-4">
+                                <div class="text-center p-3 bg-blue-50 rounded border">
+                                    <div class="text-2xl font-bold text-blue-600" x-text="getPipelineFailedCount(document)"></div>
+                                    <div class="text-sm text-blue-800">Pipeline Fails</div>
+                                </div>
+                                <div class="text-center p-3 bg-purple-50 rounded border">
+                                    <div class="text-2xl font-bold text-purple-600" x-text="getPipelineIssuesCount(document)"></div>
+                                    <div class="text-sm text-purple-800">Issues Found</div>
+                                </div>
+                                <div class="text-center p-3 bg-indigo-50 rounded border">
+                                    <div class="text-2xl font-bold text-indigo-600" x-text="getPipelineResolvedCount(document)"></div>
+                                    <div class="text-sm text-indigo-800">Issues Resolved</div>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -118,7 +153,12 @@
                     <!-- Document-level non-passed rules -->
                     <div x-data="{ open: false, showAll: false }" class="border border-gray-200 rounded-lg">
                         <button type="button" @click="open = !open" class="w-full flex items-center justify-between px-4 py-3 text-left">
-                            <span class="text-lg font-medium text-gray-900">Document-Level Issues</span>
+                            <span class="text-lg font-medium text-gray-900 flex items-center">
+                                <svg class="w-4 h-4 mr-2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                                </svg>
+                                Document-Level Issues (Adobe Analysis)
+                            </span>
                             <svg class="h-5 w-5 text-gray-500 transform transition-transform" :class="{ 'rotate-180': open }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
                             </svg>
@@ -143,9 +183,89 @@
                         </div>
                     </div>
 
+                    <!-- Pipeline Checks -->
+                    <div x-data="{ open: false }" class="border border-gray-200 rounded-lg">
+                        <button type="button" @click="open = !open" class="w-full flex items-center justify-between px-4 py-3 text-left">
+                            <span class="text-lg font-medium text-gray-900">Pipeline Checks</span>
+                            <div class="flex items-center space-x-2">
+                                <span
+                                    class="text-xs text-gray-500"
+                                    x-show="document.pipeline_runs_count"
+                                    x-text="document.pipeline_runs_count === 1 ? '1 run' : `${document.pipeline_runs_count} runs`"
+                                ></span>
+                                <svg class="h-5 w-5 text-gray-500 transform transition-transform" :class="{ 'rotate-180': open }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                                </svg>
+                            </div>
+                        </button>
+                        <div x-show="open" class="px-4 py-4 space-y-4" x-transition>
+                            <div x-show="document.pipelineRunLoading" class="text-sm text-gray-500">Loading pipeline outputs…</div>
+                            <div
+                                x-show="document.pipelineRunError"
+                                class="text-sm text-yellow-800 bg-yellow-50 border border-yellow-200 rounded px-3 py-2"
+                                x-text="document.pipelineRunError"
+                            ></div>
+                            <div
+                                x-show="document.pipelineRunsLoaded && document.pipeline_runs.length === 0 && !document.pipelineRunLoading && !document.pipelineRunError"
+                                class="text-sm text-gray-500"
+                            >No pipeline runs recorded.</div>
+                            <template x-for="run in document.pipeline_runs" :key="run.id">
+                                <div class="border border-gray-100 rounded-md p-4 space-y-3">
+                                    <div class="flex items-start justify-between">
+                                        <div class="pr-3 space-y-1">
+                                            <div class="text-md font-semibold text-gray-900" x-text="getPipelineDisplayName(run)"></div>
+                                            <div class="text-xs text-gray-500" x-show="run.created_at" x-text="`Started ${formatDate(run.created_at)}`"></div>
+                                            <div class="text-xs text-gray-500" x-show="run.completed_at" x-text="`Completed ${formatDate(run.completed_at)}`"></div>
+                                            <div class="text-sm text-gray-600 mt-2" x-show="run.pipeline_description" x-text="run.pipeline_description"></div>
+                                        </div>
+                                        <span
+                                            class="px-3 py-1 rounded-full text-xs font-medium"
+                                            :class="getPipelineStatusBadge(run.status)"
+                                            x-text="getPipelineStatusLabel(run.status)"
+                                        ></span>
+                                    </div>
+                                    <div class="text-sm text-gray-700" x-show="run.identify_payload && run.identify_payload.summary" x-text="run.identify_payload.summary"></div>
+                                    <div x-show="pipelineHasIssues(run)" class="space-y-2">
+                                        <template x-for="issue in run.issues" :key="issue.id">
+                                            <div class="border border-red-100 bg-red-50 rounded px-3 py-2 space-y-1">
+                                                <div class="text-sm font-medium text-red-800" x-text="issue.summary"></div>
+                                                <div class="text-xs text-red-700" x-text="issue.detail"></div>
+                                                <div class="text-xs text-red-600" x-show="issue.pages && issue.pages.length">
+                                                    Pages: <span x-text="issue.pages.join(', ')"></span>
+                                                </div>
+                                                <div class="text-xs text-gray-500" x-show="issue.wcag_references && issue.wcag_references.length">
+                                                    WCAG: <span x-text="issue.wcag_references.join(', ')"></span>
+                                                </div>
+                                            </div>
+                                        </template>
+                                    </div>
+                                    <div
+                                        x-show="!pipelineHasIssues(run) && run.identify_payload && Array.isArray(run.identify_payload.findings) && run.identify_payload.findings.length === 0"
+                                        class="text-sm text-gray-500"
+                                    >No issues detected.</div>
+                                    <div
+                                        x-show="run.errors && run.errors.length > 0"
+                                        class="text-sm text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2"
+                                        x-text="run.errors.join(', ')"
+                                    ></div>
+                                    <div
+                                        x-show="run.resolve_payload && run.resolve_payload.notes"
+                                        class="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded px-3 py-2"
+                                        x-text="run.resolve_payload.notes"
+                                    ></div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
                     <!-- Per-Page Summary -->
                     <div>
-                        <h4 class="text-lg font-medium text-gray-900 mb-3">Per-Page Accessibility Summary</h4>
+                        <h4 class="text-lg font-medium text-gray-900 mb-3 flex items-center">
+                            <svg class="w-4 h-4 mr-2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                            Per-Page Accessibility Summary (Adobe Analysis)
+                        </h4>
 
                         <div x-show="loadingPages[document.id]" class="text-sm text-gray-500">Loading page summaries…</div>
                         <div x-show="!loadingPages[document.id] && (!document.page_results || document.page_results.length === 0)" class="text-sm text-gray-600 flex items-center gap-3">

@@ -13,6 +13,7 @@ from app.schemas import (
     PDFPageSummaryResponse,
     PipelineRunResponse,
 )
+from app.pipelines import get_pipeline
 
 router = APIRouter()
 
@@ -21,10 +22,21 @@ def _serialize_pipeline_runs(runs) -> List[Dict[str, Any]]:
     payload: List[Dict[str, Any]] = []
     for run in runs:
         issues = sorted(run.issues, key=lambda issue: issue.id)
+        try:
+            pipeline = get_pipeline(run.pipeline_slug)
+            pipeline_title = pipeline.title
+            pipeline_description = pipeline.description
+        except KeyError:
+            slug = run.pipeline_slug or ""
+            normalized_slug = slug.replace("-", " ").replace("_", " ")
+            pipeline_title = normalized_slug.title() or slug
+            pipeline_description = ""
         payload.append({
             'id': run.id,
             'document_id': run.document_id,
             'pipeline_slug': run.pipeline_slug,
+            'pipeline_title': pipeline_title,
+            'pipeline_description': pipeline_description,
             'attempt_resolve': run.attempt_resolve,
             'status': run.status,
             'identify_payload': run.identify_payload,

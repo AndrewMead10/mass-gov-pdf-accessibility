@@ -37,7 +37,11 @@ function dashboardHandler() {
                     pageSpecificIssueGroups: [],
                     pageIssueLoading: false,
                     pageIssueError: null,
-                    pageIssueIncomplete: false
+                    pageIssueIncomplete: false,
+                    pipeline_runs: [],
+                    pipelineRunsLoaded: false,
+                    pipelineRunLoading: false,
+                    pipelineRunError: null
                 }));
             } catch (error) {
                 console.error('Failed to load documents:', error);
@@ -74,6 +78,30 @@ function dashboardHandler() {
             } finally {
                 document.pageIssueLoading = false;
                 this.loadingPages[document.id] = false;
+            }
+        },
+
+        async loadPipelineRuns(document) {
+            if (!document || document.pipelineRunLoading || document.pipelineRunsLoaded) return;
+            document.pipelineRunLoading = true;
+            document.pipelineRunError = null;
+            try {
+                const resp = await fetch(`/api/documents/${document.id}/pipelines`);
+                if (!resp.ok) throw new Error('Failed to load pipeline results');
+                const runs = await resp.json();
+                document.pipeline_runs = Array.isArray(runs)
+                    ? runs.map(run => ({
+                        ...run,
+                        status: typeof run.status === 'string' ? run.status : (run.status && run.status.value) || run.status
+                    }))
+                    : [];
+                document.pipeline_runs_count = document.pipeline_runs.length;
+                document.pipelineRunsLoaded = true;
+            } catch (error) {
+                console.error('Failed to load pipeline runs:', error);
+                document.pipelineRunError = error.message || 'Failed to load pipeline results';
+            } finally {
+                document.pipelineRunLoading = false;
             }
         },
 
@@ -151,7 +179,10 @@ function dashboardHandler() {
         async toggleDocumentExpand(document) {
             document.expanded = !document.expanded;
             if (document.expanded) {
-                await this.loadPageResults(document);
+                await Promise.all([
+                    this.loadPageResults(document),
+                    this.loadPipelineRuns(document)
+                ]);
             }
         },
 
@@ -351,6 +382,45 @@ function dashboardHandler() {
             }
         },
 
+        getPipelineStatusBadge(status) {
+            switch (status) {
+                case 'succeeded':
+                    return 'bg-green-100 text-green-800';
+                case 'partial':
+                    return 'bg-yellow-100 text-yellow-800';
+                case 'failed':
+                    return 'bg-red-100 text-red-800';
+                default:
+                    return 'bg-gray-100 text-gray-800';
+            }
+        },
+
+        getPipelineStatusLabel(status) {
+            switch (status) {
+                case 'succeeded':
+                    return 'Succeeded';
+                case 'partial':
+                    return 'Partial';
+                case 'failed':
+                    return 'Failed';
+                default:
+                    return (status || '').toString();
+            }
+        },
+
+        getPipelineDisplayName(run) {
+            if (!run) return '';
+            if (run.pipeline_title) return run.pipeline_title;
+            const slug = (run.pipeline_slug || '').replace(/[-_]+/g, ' ').trim();
+            if (!slug) return 'Pipeline';
+            return slug.replace(/\b\w/g, char => char.toUpperCase());
+        },
+
+        pipelineHasIssues(run) {
+            if (!run) return false;
+            return Array.isArray(run.issues) && run.issues.length > 0;
+        },
+
         getCountBadgeClass(type) {
             switch (type) {
                 case 'failed':
@@ -362,6 +432,41 @@ function dashboardHandler() {
                 default:
                     return 'bg-gray-100 text-gray-800';
             }
+        },
+
+        getPipelineFailedCount(document) {
+            if (!document.pipeline_runs || !Array.isArray(document.pipeline_runs)) {
+                return 0;
+            }
+            return document.pipeline_runs.filter(run => run.status === 'failed').length;
+        },
+
+        getPipelineIssuesCount(document) {
+            if (!document.pipeline_runs || !Array.isArray(document.pipeline_runs)) {
+                return 0;
+            }
+            return document.pipeline_runs.reduce((total, run) => {
+                return total + (run.issues ? run.issues.length : 0);
+            }, 0);
+        },
+
+        getPipelineResolvedCount(document) {
+            if (!document.pipeline_runs || !Array.isArray(document.pipeline_runs)) {
+                return 0;
+            }
+            return document.pipeline_runs.reduce((total, run) => {
+                // Count runs that attempted resolution and have resolve_payload
+                if (run.attempt_resolve && run.resolve_payload) {
+                    // Count issues that were addressed based on resolve_payload
+                    const resolvedIssues = run.resolve_payload.resolved_issues || 0;
+                    return total + resolvedIssues;
+                }
+                // If no specific count, assume successful runs with attempt_resolve resolved their issues
+                if (run.attempt_resolve && run.status === 'succeeded') {
+                    return total + (run.issues ? run.issues.length : 0);
+                }
+                return total;
+            }, 0);
         }
     };
 }

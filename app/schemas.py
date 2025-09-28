@@ -64,6 +64,8 @@ class PipelineRunResponse(BaseModel):
     id: int
     document_id: int
     pipeline_slug: str
+    pipeline_title: Optional[str] = None
+    pipeline_description: Optional[str] = None
     attempt_resolve: bool
     status: PipelineRunStatus
     identify_payload: Optional[Dict[str, Any]] = None
