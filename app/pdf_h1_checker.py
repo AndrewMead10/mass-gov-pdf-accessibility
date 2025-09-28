@@ -27,7 +27,7 @@ from adobe.pdfservices.operation.pdfjobs.params.extract_pdf.extract_pdf_params i
 from adobe.pdfservices.operation.pdfjobs.result.extract_pdf_result import ExtractPDFResult
 
 # Initialize the logger
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 # Load environment variables from .env file
@@ -113,7 +113,6 @@ def has_h1_heading(structure_data: Dict[str, Any]) -> bool:
         if element.get('Path', '').endswith('/H1'):
             content = element.get('Text', '')
             if content and len(content.strip()) > 0:
-                logger.info(f"Found explicit H1 heading: '{content.strip()}'")
                 return True
     
     # If no explicit H1 found, look for Title elements
@@ -121,7 +120,6 @@ def has_h1_heading(structure_data: Dict[str, Any]) -> bool:
         if element.get('Path', '').endswith('/Title'):
             content = element.get('Text', '')
             if content and len(content.strip()) > 0:
-                logger.info(f"Found Title element as H1 heading: '{content.strip()}'")
                 return True
     
     # If still no heading found, use heuristics to identify potential H1 headings
@@ -142,12 +140,10 @@ def has_h1_heading(structure_data: Dict[str, Any]) -> bool:
         # Check for common form title patterns
         if ("FORM" in text.upper() or "CERTIFICATE" in text.upper() or 
             "APPLICATION" in text.upper() or "SALES" in text.upper()):
-            logger.info(f"Found potential H1 heading (form title): '{text}'")
             return True
         
         # Check if this text appears to be a heading (standalone text, not too long)
         if len(text) < 50 and not text.endswith('.') and text.isupper():  # All caps might indicate a heading
-            logger.info(f"Found potential H1 heading (all caps): '{text}'")
             return True
     
     # If we reach here, no H1 heading was found
@@ -227,17 +223,7 @@ def check_pdf_for_h1(pdf_path: str, verbose: bool = False) -> str:
     # Extract the structure from the PDF
     structure_data = extract_structure_from_pdf(pdf_path)
     
-    # Print the first few elements to understand the structure
-    if 'elements' in structure_data:
-        logger.info(f"Found {len(structure_data['elements'])} elements in the PDF")
-        for i, element in enumerate(structure_data['elements'][:5]):
-            logger.info(f"Element {i+1} type: {element.get('Path', 'Unknown')}")
-            if 'Text' in element:
-                logger.info(f"  Text: {element['Text'][:100]}...")
-            if 'attributes' in element:
-                logger.info(f"  Attributes: {element['attributes']}")
-    else:
-        logger.info("No elements found in the PDF structure")
+    # Skip printing structure details unless in debug mode
     
     # Check if the PDF has an H1 heading
     if not has_h1_heading(structure_data):
@@ -246,8 +232,7 @@ def check_pdf_for_h1(pdf_path: str, verbose: bool = False) -> str:
     # Get the H1 heading text
     h1_text = get_h1_heading(structure_data)
     
-    if verbose and h1_text:
-        logger.info(f"Found H1 heading: {h1_text}")
+    # Don't log the heading - it will be returned
     
     return h1_text
 
@@ -271,7 +256,8 @@ def main():
         logger.error("No PDF files found")
         sys.exit(0)
     
-    logger.info(f"Processing {len(pdf_files)} PDF file(s)...")
+    if args.verbose:
+        print(f"Processing {len(pdf_files)} PDF file(s)...")
     
     success_count = 0
     failure_count = 0
@@ -279,16 +265,18 @@ def main():
     for pdf_file in pdf_files:
         try:
             h1_text = check_pdf_for_h1(str(pdf_file), args.verbose)
-            logger.info(f"✓ {pdf_file.name}: Has H1 heading: '{h1_text}'")
+            if args.verbose:
+                print(f"✓ {pdf_file.name}: Has H1 heading: '{h1_text}'")
             success_count += 1
         except PDFHeadingError as e:
-            logger.error(f"✗ {pdf_file.name}: {str(e)}")
+            print(f"✗ {pdf_file.name}: {str(e)}")
             failure_count += 1
         except Exception as e:
-            logger.error(f"! {pdf_file.name}: Error processing file: {str(e)}")
+            print(f"! {pdf_file.name}: Error processing file: {str(e)}")
             failure_count += 1
     
-    logger.info(f"\nSummary: {success_count} PDF(s) with H1 headings, {failure_count} PDF(s) without H1 headings")
+    if args.verbose:
+        print(f"\nSummary: {success_count} PDF(s) with H1 headings, {failure_count} PDF(s) without H1 headings")
     
     # Return non-zero exit code if any files don't have H1 headings
     if failure_count > 0:

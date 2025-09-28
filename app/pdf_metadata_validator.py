@@ -3,19 +3,23 @@
 PDF Metadata Validator
 
 This script validates PDF filenames against their H1 headings and suggests
-corrections using the OpenAI API if needed.
+corrections using the OpenAI API if needed. It uses the Adobe PDF Services API
+through pdf_h1_checker to accurately detect H1 headings in PDF files.
 """
 
 import os
 import re
 import sys
 import argparse
+# No need to import logging as we're using print statements
 from pathlib import Path
 from typing import Optional, Tuple, List
 
 import PyPDF2
 from dotenv import load_dotenv
 import openai
+# Import our custom H1 checker that uses Adobe PDF Services API
+from pdf_h1_checker import check_pdf_for_h1, PDFHeadingError
 
 # Load environment variables from .env file
 load_dotenv()
@@ -31,50 +35,59 @@ if not OPENAI_API_KEY:
 client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
 
-def extract_h1_from_pdf(pdf_path: str) -> Optional[str]:
+def extract_h1_from_pdf(pdf_path: str, verbose: bool = False) -> Optional[str]:
     """
-    Extract the H1 heading from a PDF file.
+    Extract the H1 heading from a PDF file using Adobe PDF Services API.
     
     Args:
         pdf_path: Path to the PDF file
+        verbose: Whether to print detailed information
         
     Returns:
         The H1 heading text if found, None otherwise
     """
     try:
-        with open(pdf_path, 'rb') as file:
-            reader = PyPDF2.PdfReader(file)
-            
-            # We'll check the first few pages for an H1 heading
-            # This is a simplified approach - real H1 detection would require more sophisticated analysis
-            for page_num in range(min(3, len(reader.pages))):
-                page = reader.pages[page_num]
-                text = page.extract_text()
+        # Use the pdf_h1_checker module to accurately detect H1 headings
+        return check_pdf_for_h1(pdf_path, verbose)
+    except PDFHeadingError:
+        # Don't log this message unless in debug mode
+        
+        # Fall back to the basic PyPDF2 extraction if Adobe API doesn't find an H1
+        try:
+            with open(pdf_path, 'rb') as file:
+                reader = PyPDF2.PdfReader(file)
                 
-                if not text:
-                    continue
-                
-                # Look for potential H1 headings - this is a simplified approach
-                # Real implementation would need to consider font size, styling, etc.
-                lines = text.split('\n')
-                for line in lines:
-                    line = line.strip()
-                    # Skip empty lines or very short lines
-                    if not line or len(line) < 5:
+                # We'll check the first few pages for an H1 heading
+                for page_num in range(min(3, len(reader.pages))):
+                    page = reader.pages[page_num]
+                    text = page.extract_text()
+                    
+                    if not text:
                         continue
                     
-                    # Skip lines that are likely not titles (too long, contain certain patterns)
-                    if len(line) > 100 or re.search(r'^\d+\.\s', line):
-                        continue
+                    # Look for potential H1 headings with basic heuristics
+                    lines = text.split('\n')
+                    for line in lines:
+                        line = line.strip()
+                        # Skip empty lines or very short lines
+                        if not line or len(line) < 5:
+                            continue
+                        
+                        # Skip lines that are likely not titles (too long, contain certain patterns)
+                        if len(line) > 100 or re.search(r'^\d+\.\s', line):
+                            continue
+                        
+                        # If we find a good candidate for H1, return it
+                        return line
                     
-                    # If we find a good candidate for H1, return it
-                    return line
-                
-        # If we couldn't find a clear H1 heading, return None
-        return None
-    
+            # If we couldn't find a clear H1 heading, return None
+            return None
+        
+        except Exception as e:
+            print(f"Error in fallback PDF reading: {e}")
+            return None
     except Exception as e:
-        print(f"Error reading PDF: {e}")
+        print(f"Error extracting H1 heading: {e}")
         return None
 
 
@@ -168,6 +181,7 @@ def main():
     parser.add_argument('pdf_path', help='Path to the PDF file or directory containing PDFs')
     parser.add_argument('--no-rename', action='store_true', help='Do not automatically rename files with invalid names')
     parser.add_argument('--verbose', '-v', action='store_true', help='Print detailed information')
+    parser.add_argument('--use-fallback-only', action='store_true', help='Only use PyPDF2 for H1 detection (skip Adobe API)')
     
     args = parser.parse_args()
     path = Path(args.pdf_path)
@@ -191,13 +205,55 @@ def main():
             print(f"\nAnalyzing: {pdf_file}")
         
         # Extract H1 heading
-        h1_heading = extract_h1_from_pdf(str(pdf_file))
+        if args.use_fallback_only:
+            # Use only the PyPDF2 fallback method
+            try:
+                with open(str(pdf_file), 'rb') as file:
+                    reader = PyPDF2.PdfReader(file)
+                    
+                    # Check the first few pages for an H1 heading
+                    h1_heading = None
+                    for page_num in range(min(3, len(reader.pages))):
+                        page = reader.pages[page_num]
+                        text = page.extract_text()
+                        
+                        if not text:
+                            continue
+                        
+                        # Look for potential H1 headings with basic heuristics
+                        lines = text.split('\n')
+                        for line in lines:
+                            line = line.strip()
+                            # Skip empty lines or very short lines
+                            if not line or len(line) < 5:
+                                continue
+                            
+                            # Skip lines that are likely not titles
+                            if len(line) > 100 or re.search(r'^\d+\.\s', line):
+                                continue
+                            
+                            # If we find a good candidate for H1, use it
+                            h1_heading = line
+                            break
+                        
+                        if h1_heading:
+                            break
+                            
+                if args.verbose and h1_heading:
+                    print(f"Detected H1 (fallback method): {h1_heading}")
+            except Exception as e:
+                print(f"Error reading PDF: {e}")
+                h1_heading = None
+        else:
+            # Use the Adobe PDF Services API through our pdf_h1_checker module
+            h1_heading = extract_h1_from_pdf(str(pdf_file), args.verbose)
+        
         if not h1_heading:
             print(f"Warning: Could not extract H1 heading from {pdf_file}")
             continue
         
-        if args.verbose:
-            print(f"Detected H1: {h1_heading}")
+        if args.verbose and not args.use_fallback_only:
+            print(f"Detected H1 (Adobe API): {h1_heading}")
         
         # Get current filename without extension
         current_filename = pdf_file.stem
