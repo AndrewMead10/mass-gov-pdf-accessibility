@@ -1,7 +1,9 @@
-from pydantic import BaseModel
+from __future__ import annotations
+
+from pydantic import BaseModel, Field
 from datetime import datetime
 from typing import Optional, Dict, Any, List
-from app.models import ProcessingStatus
+from app.models import ProcessingStatus, PipelineRunStatus
 
 class PDFDocumentBase(BaseModel):
     filename: str
@@ -23,6 +25,8 @@ class PDFDocumentResponse(PDFDocumentBase):
     accessibility_report_json: Optional[Dict[str, Any]] = None
     tagged_pdf_path: Optional[str] = None
     page_results_count: Optional[int] = None
+    pipeline_runs_count: Optional[int] = None
+    pipeline_runs: Optional[List["PipelineRunResponse"]] = None
 
     class Config:
         from_attributes = True
@@ -40,6 +44,37 @@ class PDFPageResultBase(BaseModel):
     total_failed: int = 0
     total_passed: int = 0
     needs_manual_check: int = 0
+
+
+class PipelineIssueResponse(BaseModel):
+    id: int
+    pipeline_run_id: int
+    issue_code: str
+    summary: str
+    detail: str
+    pages: List[int]
+    wcag_references: List[str] = Field(default_factory=list)
+    extra: Optional[Dict[str, Any]] = None
+
+    class Config:
+        from_attributes = True
+
+
+class PipelineRunResponse(BaseModel):
+    id: int
+    document_id: int
+    pipeline_slug: str
+    attempt_resolve: bool
+    status: PipelineRunStatus
+    identify_payload: Optional[Dict[str, Any]] = None
+    resolve_payload: Optional[Dict[str, Any]] = None
+    errors: Optional[List[str]] = None
+    created_at: datetime
+    completed_at: datetime
+    issues: List[PipelineIssueResponse] = Field(default_factory=list)
+
+    class Config:
+        from_attributes = True
 
 
 class PDFPageResultResponse(PDFPageResultBase):

@@ -3,18 +3,22 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 import os
 import threading
-from typing import Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from app.database import get_db
 from app import crud
-from app.models import ProcessingStatus
+from app.models import ProcessingStatus, PipelineRunStatus
 from app.pdf_accessibility_checker import PDFAccessibilityChecker
 from app.schemas import ProcessingStatusResponse
+from app.pipelines.base import PipelineContext, PipelineRunResult
+from app.pipelines.manager import PipelineManager, ManagerConfig
+from app.pipelines.helpers import serialize_findings
 
 router = APIRouter()
 
 # Default pool size can be overridden via PAGE_PROCESSING_WORKERS env var
 PAGE_WORKER_FALLBACK = 8
+PIPELINE_OUTPUT_ROOT = os.path.join("output_pdfs", "pipelines")
 
 
 def _resolve_worker_count(total_pages: int) -> int:
@@ -81,6 +85,14 @@ def _collect_page_reports(
     results.sort(key=lambda item: item[0])
     return results
 
+
+def _derive_pipeline_status(result: PipelineRunResult, attempt_resolve: bool) -> PipelineRunStatus:
+    if not result.errors:
+        return PipelineRunStatus.SUCCEEDED
+    if attempt_resolve and result.resolve and result.identify.has_findings():
+        return PipelineRunStatus.PARTIAL
+    return PipelineRunStatus.FAILED
+
 def process_pdf_background(document_id: int, db_url: str, credentials_file: str = None):
     """Background task to process PDF"""
     from sqlalchemy import create_engine
@@ -136,6 +148,78 @@ def process_pdf_background(document_id: int, db_url: str, credentials_file: str 
             accessibility_report=overall_result['accessibility_report_json'],
             tagged_pdf_path=overall_result['tagged_pdf_path']
         )
+
+        # 5) Execute registered pipelines for detailed analysis
+        attempt_resolve = os.getenv("PIPELINES_ATTEMPT_RESOLVE", "false").lower() in {"1", "true", "yes"}
+        pipeline_output_dir = os.path.join(PIPELINE_OUTPUT_ROOT, str(document_id))
+        os.makedirs(pipeline_output_dir, exist_ok=True)
+
+        page_payloads: List[Dict[str, Any]] = [
+            {
+                "page_number": page_num,
+                "report": accessibility_report,
+            }
+            for page_num, accessibility_report in page_reports
+        ]
+
+        pipeline_context = PipelineContext(
+            document_id=document_id,
+            pdf_path=document.file_path,
+            document_report=overall_result['accessibility_report_json'],
+            page_reports=page_payloads,
+            output_dir=pipeline_output_dir,
+            metadata={
+                "tagged_pdf_path": overall_result['tagged_pdf_path'],
+                "page_count": page_count,
+            },
+        )
+
+        manager = PipelineManager(ManagerConfig(attempt_resolve=attempt_resolve))
+        pipeline_results = manager.run(pipeline_context)
+
+        for result in pipeline_results:
+            identify_payload = {
+                "summary": result.identify.summary,
+                "generated_at": result.identify.generated_at.isoformat(),
+                "findings": serialize_findings(result.identify.findings),
+            }
+
+            resolve_payload = None
+            if result.resolve:
+                resolve_payload = {
+                    "resolved_pdf_path": result.resolve.resolved_pdf_path,
+                    "notes": result.resolve.notes,
+                    "generated_at": result.resolve.generated_at.isoformat(),
+                    "change_log": [
+                        {
+                            "description": change.description,
+                            "pages_impacted": list(change.pages_impacted),
+                            "annotations": change.annotations,
+                        }
+                        for change in result.resolve.change_log
+                    ],
+                }
+
+            status = _derive_pipeline_status(result, attempt_resolve)
+
+            run_row = crud.create_pipeline_run(
+                db=db,
+                document_id=document_id,
+                pipeline_slug=result.identify.pipeline_slug,
+                attempt_resolve=attempt_resolve,
+                status=status,
+                identify_payload=identify_payload,
+                resolve_payload=resolve_payload,
+                errors=result.errors,
+            )
+
+            crud.create_pipeline_issues(
+                db=db,
+                pipeline_run_id=run_row.id,
+                issues=identify_payload["findings"],
+            )
+
+            crud.finalize_pipeline_run(db, run_row)
 
     except Exception as e:
         crud.update_document_status(

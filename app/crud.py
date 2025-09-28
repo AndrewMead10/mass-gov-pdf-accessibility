@@ -1,9 +1,17 @@
-from sqlalchemy.orm import Session
-from app.models import PDFDocument, ProcessingStatus, PDFPageResult
-from app.schemas import PDFDocumentCreate
-from typing import List, Optional
-import json
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from sqlalchemy.orm import Session
+
+from app.models import (
+    PDFDocument,
+    PDFPageResult,
+    PipelineIssue,
+    PipelineRun,
+    PipelineRunStatus,
+    ProcessingStatus,
+)
+from app.schemas import PDFDocumentCreate
 
 def create_pdf_document(db: Session, pdf_document: PDFDocumentCreate) -> PDFDocument:
     db_document = PDFDocument(**pdf_document.dict())
@@ -65,6 +73,16 @@ def delete_pdf_document(db: Session, document_id: int) -> bool:
     if document:
         # Delete related page results first to avoid orphans
         db.query(PDFPageResult).filter(PDFPageResult.document_id == document_id).delete()
+
+        run_ids = [run.id for run in document.pipeline_runs]
+        if run_ids:
+            db.query(PipelineIssue).filter(PipelineIssue.pipeline_run_id.in_(run_ids)).delete(
+                synchronize_session=False
+            )
+            db.query(PipelineRun).filter(PipelineRun.id.in_(run_ids)).delete(
+                synchronize_session=False
+            )
+
         db.delete(document)
         db.commit()
         return True
@@ -113,3 +131,73 @@ def delete_page_results_for_document(db: Session, document_id: int) -> int:
 
 def count_page_results_for_document(db: Session, document_id: int) -> int:
     return db.query(PDFPageResult).filter(PDFPageResult.document_id == document_id).count()
+
+
+# --- Pipeline run helpers ---
+
+def create_pipeline_run(
+    db: Session,
+    *,
+    document_id: int,
+    pipeline_slug: str,
+    attempt_resolve: bool,
+    status: PipelineRunStatus,
+    identify_payload: Optional[Dict[str, Any]],
+    resolve_payload: Optional[Dict[str, Any]],
+    errors: Optional[List[str]],
+) -> PipelineRun:
+    run = PipelineRun(
+        document_id=document_id,
+        pipeline_slug=pipeline_slug,
+        attempt_resolve=attempt_resolve,
+        status=status,
+        identify_payload=identify_payload,
+        resolve_payload=resolve_payload,
+        errors=errors or [],
+    )
+    db.add(run)
+    db.flush()
+    return run
+
+
+def create_pipeline_issues(
+    db: Session,
+    *,
+    pipeline_run_id: int,
+    issues: List[Dict[str, Any]],
+) -> None:
+    if not issues:
+        return
+    records = [
+        PipelineIssue(
+            pipeline_run_id=pipeline_run_id,
+            issue_code=item["issue_code"],
+            summary=item["summary"],
+            detail=item["detail"],
+            pages=item.get("pages", []),
+            wcag_references=item.get("wcag_references", []),
+            extra=item.get("extra"),
+        )
+        for item in issues
+    ]
+    db.bulk_save_objects(records)
+
+
+def finalize_pipeline_run(db: Session, run: PipelineRun) -> PipelineRun:
+    run.completed_at = datetime.utcnow()
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+def get_pipeline_runs_for_document(db: Session, document_id: int) -> List[PipelineRun]:
+    return (
+        db.query(PipelineRun)
+        .filter(PipelineRun.document_id == document_id)
+        .order_by(PipelineRun.created_at.asc())
+        .all()
+    )
+
+
+def count_pipeline_runs_for_document(db: Session, document_id: int) -> int:
+    return db.query(PipelineRun).filter(PipelineRun.document_id == document_id).count()
