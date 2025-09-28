@@ -145,10 +145,13 @@ def download_processed_pdf(document_id: int, db: Session = Depends(get_db)):
     if not document.tagged_pdf_path or not os.path.exists(document.tagged_pdf_path):
         raise HTTPException(status_code=404, detail="Processed PDF not found")
 
+    download_name = document.filename or document.original_filename or os.path.basename(document.tagged_pdf_path)
+    download_name = os.path.basename(download_name) if download_name else "document.pdf"
+
     return FileResponse(
         path=document.tagged_pdf_path,
         media_type='application/pdf',
-        filename=f"tagged_{document.original_filename}"
+        filename=download_name
     )
 
 @router.get("/documents/{document_id}/pages", response_model=List[PDFPageSummaryResponse])
