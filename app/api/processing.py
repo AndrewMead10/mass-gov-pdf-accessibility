@@ -1,14 +1,97 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 import os
+import threading
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from app.database import get_db
 from app import crud
-from app.models import ProcessingStatus
+from app.models import ProcessingStatus, PipelineRunStatus
 from app.pdf_accessibility_checker import PDFAccessibilityChecker
 from app.schemas import ProcessingStatusResponse
+from app.pipelines.base import PipelineContext, PipelineRunResult
+from app.pipelines.manager import PipelineManager, ManagerConfig
+from app.pipelines.helpers import serialize_findings
 
 router = APIRouter()
+
+# Default pool size can be overridden via PAGE_PROCESSING_WORKERS env var
+PAGE_WORKER_FALLBACK = 8
+PIPELINE_OUTPUT_ROOT = os.path.join("output_pdfs", "pipelines")
+
+
+def _resolve_worker_count(total_pages: int) -> int:
+    """Determine how many workers to use for per-page processing."""
+    if total_pages <= 0:
+        return 0
+
+    configured = os.getenv("PAGE_PROCESSING_WORKERS")
+    workers = PAGE_WORKER_FALLBACK
+    if configured:
+        try:
+            workers = int(configured)
+        except ValueError:
+            # Fall back to default when the env var is not an integer
+            workers = PAGE_WORKER_FALLBACK
+
+    workers = max(1, workers)
+    return min(total_pages, workers)
+
+
+def _collect_page_reports(
+    file_path: str,
+    page_numbers: Iterable[int],
+    credentials_file: Optional[str],
+) -> List[Tuple[int, dict]]:
+    """Run per-page accessibility checks in parallel and return ordered results."""
+    pages = list(page_numbers)
+    if not pages:
+        return []
+
+    max_workers = _resolve_worker_count(len(pages))
+    thread_local = threading.local()
+
+    def _get_checker() -> PDFAccessibilityChecker:
+        checker = getattr(thread_local, "checker", None)
+        if checker is None:
+            checker = PDFAccessibilityChecker(credentials_file=credentials_file)
+            thread_local.checker = checker
+        return checker
+
+    def _process_page(page_num: int) -> Tuple[int, dict]:
+        checker = _get_checker()
+        page_result = checker.check_accessibility(
+            file_path,
+            page_start=page_num,
+            page_end=page_num,
+            save_tagged_pdf=False,
+        )
+        return page_num, page_result["accessibility_report_json"]
+
+    results: List[Tuple[int, dict]] = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_page = {executor.submit(_process_page, page): page for page in pages}
+        for future in as_completed(future_to_page):
+            page_num = future_to_page[future]
+            try:
+                results.append(future.result())
+            except Exception as exc:
+                # Cancel any pending tasks before bubbling up the error
+                for pending_future in future_to_page:
+                    pending_future.cancel()
+                raise RuntimeError(f"Failed to process page {page_num}: {exc}") from exc
+
+    results.sort(key=lambda item: item[0])
+    return results
+
+
+def _derive_pipeline_status(result: PipelineRunResult, attempt_resolve: bool) -> PipelineRunStatus:
+    if not result.errors:
+        return PipelineRunStatus.SUCCEEDED
+    if attempt_resolve and result.resolve and result.identify.has_findings():
+        return PipelineRunStatus.PARTIAL
+    return PipelineRunStatus.FAILED
 
 def process_pdf_background(document_id: int, db_url: str, credentials_file: str = None):
     """Background task to process PDF"""
@@ -44,19 +127,18 @@ def process_pdf_background(document_id: int, db_url: str, credentials_file: str 
             # If unable to read page count, mark as failed
             raise RuntimeError(f"Failed to read PDF page count: {e}")
 
-        # 3) Analyze each page individually and store results
-        for page_num in range(1, page_count + 1):
-            page_result = checker.check_accessibility(
-                document.file_path,
-                page_start=page_num,
-                page_end=page_num,
-                save_tagged_pdf=False,
-            )
+        # 3) Analyze each page in parallel and store results
+        page_reports = _collect_page_reports(
+            file_path=document.file_path,
+            page_numbers=range(1, page_count + 1),
+            credentials_file=credentials_file,
+        )
+        for page_num, accessibility_report in page_reports:
             crud.create_page_result(
                 db=db,
                 document_id=document_id,
                 page_number=page_num,
-                accessibility_report=page_result['accessibility_report_json']
+                accessibility_report=accessibility_report,
             )
 
         # 4) Update document with overall results and mark as completed
@@ -66,6 +148,78 @@ def process_pdf_background(document_id: int, db_url: str, credentials_file: str 
             accessibility_report=overall_result['accessibility_report_json'],
             tagged_pdf_path=overall_result['tagged_pdf_path']
         )
+
+        # 5) Execute registered pipelines for detailed analysis
+        attempt_resolve = os.getenv("PIPELINES_ATTEMPT_RESOLVE", "false").lower() in {"1", "true", "yes"}
+        pipeline_output_dir = os.path.join(PIPELINE_OUTPUT_ROOT, str(document_id))
+        os.makedirs(pipeline_output_dir, exist_ok=True)
+
+        page_payloads: List[Dict[str, Any]] = [
+            {
+                "page_number": page_num,
+                "report": accessibility_report,
+            }
+            for page_num, accessibility_report in page_reports
+        ]
+
+        pipeline_context = PipelineContext(
+            document_id=document_id,
+            pdf_path=document.file_path,
+            document_report=overall_result['accessibility_report_json'],
+            page_reports=page_payloads,
+            output_dir=pipeline_output_dir,
+            metadata={
+                "tagged_pdf_path": overall_result['tagged_pdf_path'],
+                "page_count": page_count,
+            },
+        )
+
+        manager = PipelineManager(ManagerConfig(attempt_resolve=attempt_resolve))
+        pipeline_results = manager.run(pipeline_context)
+
+        for result in pipeline_results:
+            identify_payload = {
+                "summary": result.identify.summary,
+                "generated_at": result.identify.generated_at.isoformat(),
+                "findings": serialize_findings(result.identify.findings),
+            }
+
+            resolve_payload = None
+            if result.resolve:
+                resolve_payload = {
+                    "resolved_pdf_path": result.resolve.resolved_pdf_path,
+                    "notes": result.resolve.notes,
+                    "generated_at": result.resolve.generated_at.isoformat(),
+                    "change_log": [
+                        {
+                            "description": change.description,
+                            "pages_impacted": list(change.pages_impacted),
+                            "annotations": change.annotations,
+                        }
+                        for change in result.resolve.change_log
+                    ],
+                }
+
+            status = _derive_pipeline_status(result, attempt_resolve)
+
+            run_row = crud.create_pipeline_run(
+                db=db,
+                document_id=document_id,
+                pipeline_slug=result.identify.pipeline_slug,
+                attempt_resolve=attempt_resolve,
+                status=status,
+                identify_payload=identify_payload,
+                resolve_payload=resolve_payload,
+                errors=result.errors,
+            )
+
+            crud.create_pipeline_issues(
+                db=db,
+                pipeline_run_id=run_row.id,
+                issues=identify_payload["findings"],
+            )
+
+            crud.finalize_pipeline_run(db, run_row)
 
     except Exception as e:
         crud.update_document_status(
@@ -127,8 +281,6 @@ def process_pdf_pages_background(document_id: int, db_url: str, credentials_file
         if not document:
             return
 
-        checker = PDFAccessibilityChecker(credentials_file=credentials_file)
-
         # Determine page count
         try:
             from pypdf import PdfReader
@@ -137,22 +289,25 @@ def process_pdf_pages_background(document_id: int, db_url: str, credentials_file
         except Exception as e:
             raise RuntimeError(f"Failed to read PDF page count: {e}")
 
-        # Create missing page results only
-        for page_num in range(1, page_count + 1):
-            existing = crud.get_page_result(db, document_id=document_id, page_number=page_num)
-            if existing:
-                continue
-            page_result = checker.check_accessibility(
-                document.file_path,
-                page_start=page_num,
-                page_end=page_num,
-                save_tagged_pdf=False,
-            )
+        # Create missing page results in parallel
+        missing_pages = [
+            page_num
+            for page_num in range(1, page_count + 1)
+            if not crud.get_page_result(db, document_id=document_id, page_number=page_num)
+        ]
+
+        page_reports = _collect_page_reports(
+            file_path=document.file_path,
+            page_numbers=missing_pages,
+            credentials_file=credentials_file,
+        )
+
+        for page_num, accessibility_report in page_reports:
             crud.create_page_result(
                 db=db,
                 document_id=document_id,
                 page_number=page_num,
-                accessibility_report=page_result['accessibility_report_json']
+                accessibility_report=accessibility_report,
             )
     finally:
         db.close()

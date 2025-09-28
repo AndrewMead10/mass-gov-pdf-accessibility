@@ -10,6 +10,7 @@ A Python script that uses Adobe PDF Services to check PDF documents for accessib
 - Supports checking specific page ranges
 - Creates timestamped output directories
 - Comprehensive error handling and logging
+- Extensible identify/resolve pipeline framework for Adobe findings and custom checks
 
 ## Prerequisites
 
@@ -86,6 +87,114 @@ python pdf_accessibility_checker.py your_document.pdf --verbose
 # Show help
 python pdf_accessibility_checker.py --help
 ```
+
+### Web Application
+
+To run the web application:
+
+```bash
+# Activate virtual environment
+source .venv/bin/activate
+
+# Run the web application
+python -m app.main
+```
+
+The web application will be available at `http://localhost:8000`
+
+## Pipeline Framework
+
+The app now includes a pipeline framework under `app/pipelines` that layers on top of the Adobe accessibility report and the per-page results stored in the database. Each pipeline focuses on a single category of issues and can optionally ship with an automatic fix-up step.
+
+- `app/pipelines/base.py` defines the abstract `BasePipeline` contract along with dataclasses (`PipelineContext`, `IdentifyResult`, `ResolveResult`, etc.) used during execution.
+- `app/pipelines/helpers.py` contains shared utilities for reading PDFs, walking the Adobe report, and serialising findings.
+- `app/pipelines/__init__.py` automatically discovers any subclasses of `BasePipeline` placed in the `app/pipelines` package.
+- `app/pipelines/manager.py` exposes `PipelineManager`, which orchestrates running all registered pipelines and handling optional resolve steps.
+
+### Implementing a pipeline
+
+1. Create a new file in `app/pipelines/` and subclass `BasePipeline`.
+2. Implement `identify(self, context)` to return an `IdentifyResult` instance with one `IdentifyFinding` per accessibility issue found. Include the Adobe issue code, a human-readable summary, and the impacted page numbers.
+3. (Optional) Implement `resolve(self, context, identify)` to produce a remediated PDF and describe the changes via `ResolveResult`.
+
+Pipelines have access to:
+
+- The original PDF path and tagged output path.
+- The full document-level Adobe accessibility report and all stored per-page reports.
+- A document-specific output directory for saving resolved PDFs or debugging artifacts.
+
+### Execution and storage
+
+- `process_pdf_background` runs the pipeline manager after the base Adobe processing finishes.
+- Results are stored in two new tables: `pipeline_runs` (metadata for each pipeline execution) and `pipeline_issues` (individual findings).
+- Set `PIPELINES_ATTEMPT_RESOLVE=true` to allow automatic resolve steps to run; otherwise only identify steps execute.
+
+### Accessing pipeline data
+
+- Document listings now include a `pipeline_runs_count` field. Detailed document responses include the full run history and findings.
+- A dedicated endpoint `GET /api/documents/{document_id}/pipelines` returns all stored runs for a document, including serialized identify/resolve payloads and issue records.
+
+## Docker Deployment
+
+### Using Docker Compose (Recommended)
+
+1. **Build and run with Docker Compose:**
+   ```bash
+   docker-compose up --build
+   ```
+
+2. **Run in detached mode:**
+   ```bash
+   docker-compose up -d --build
+   ```
+
+3. **Stop the application:**
+   ```bash
+   docker-compose down
+   ```
+
+### Using Docker directly
+
+1. **Build the Docker image:**
+   ```bash
+   docker build -t pdf-accessibility-checker .
+   ```
+
+2. **Run the container:**
+   ```bash
+   docker run -p 8000:8000 \
+     -v ./input_pdfs:/app/input_pdfs \
+     -v ./output_pdfs:/app/output_pdfs \
+     -v ./pdf_accessibility.db:/app/pdf_accessibility.db \
+     -v ./pdfservices-api-credentials.json:/app/pdfservices-api-credentials.json \
+     pdf-accessibility-checker
+   ```
+
+3. **Run in detached mode:**
+   ```bash
+   docker run -d -p 8000:8000 \
+     -v ./input_pdfs:/app/input_pdfs \
+     -v ./output_pdfs:/app/output_pdfs \
+     -v ./pdf_accessibility.db:/app/pdf_accessibility.db \
+     -v ./pdfservices-api-credentials.json:/app/pdfservices-api-credentials.json \
+     --name pdf-checker \
+     pdf-accessibility-checker
+   ```
+
+### Docker Prerequisites
+
+- Docker and Docker Compose installed
+- Credentials file `pdfservices-api-credentials.json` in the project root
+- Create directories for volumes:
+  ```bash
+  mkdir -p input_pdfs output_pdfs
+  ```
+
+The Docker setup includes:
+- Health checks to monitor application status
+- Persistent volumes for PDF files and database
+- Automatic restart unless stopped manually
+- Port 8000 exposed for web access
 
 ## Output
 
