@@ -149,6 +149,16 @@ def get_document_page_summaries(document_id: int, db: Session = Depends(get_db))
     page_results = crud.get_page_results_for_document(db, document_id=document_id)
     return page_results
 
+@router.get("/documents/{document_id}/pages/detailed", response_model=List[PDFPageResultResponse])
+def get_document_page_details_all(document_id: int, db: Session = Depends(get_db)):
+    """Get detailed per-page results for all pages of a document at once"""
+    document = crud.get_pdf_document(db, document_id=document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    page_results = crud.get_page_results_for_document(db, document_id=document_id)
+    return page_results
+
 @router.get("/documents/{document_id}/pages/{page_number}", response_model=PDFPageResultResponse)
 def get_document_page_detail(document_id: int, page_number: int, db: Session = Depends(get_db)):
     """Get detailed per-page result for a specific page"""

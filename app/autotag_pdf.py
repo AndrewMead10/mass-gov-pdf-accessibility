@@ -7,11 +7,11 @@ It can process single files or entire directories and includes options for gener
 accessibility reports and configuring tagging parameters.
 """
 
+import argparse
+import json
+import logging
 import os
 import sys
-import argparse
-import logging
-from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -34,18 +34,50 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 class PDFAutotagger:
-    """
-    A class to handle PDF autotagging operations using Adobe PDF Services API.
-    """
-    
-    def __init__(self):
-        """Initialize the PDFAutotagger with default values."""
-        self.credentials = ServicePrincipalCredentials(
-            client_id=os.getenv('ADOBE_CLIENT_ID'),
-            client_secret=os.getenv('ADOBE_CLIENT_SECRET')
-        )
+    """A class to handle PDF autotagging operations using Adobe PDF Services API."""
+
+    def __init__(
+        self,
+        credentials: Optional[ServicePrincipalCredentials] = None,
+        *,
+        credentials_file: Optional[str] = None,
+    ) -> None:
+        if credentials is not None:
+            self.credentials = credentials
+        elif credentials_file:
+            self.credentials = self._load_credentials_from_file(credentials_file)
+        else:
+            self.credentials = self._load_credentials_from_env()
+
         self.pdf_services = PDFServices(credentials=self.credentials)
-        
+
+    @staticmethod
+    def _load_credentials_from_file(credentials_file: str) -> ServicePrincipalCredentials:
+        try:
+            with open(credentials_file, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except OSError as exc:
+            raise RuntimeError(f"Unable to read credentials file: {exc}") from exc
+
+        client_id = payload.get("client_credentials", {}).get("client_id")
+        client_secret = payload.get("client_credentials", {}).get("client_secret")
+        if not client_id or not client_secret:
+            raise ValueError("Missing client credentials in provided file")
+
+        return ServicePrincipalCredentials(client_id=client_id, client_secret=client_secret)
+
+    @staticmethod
+    def _load_credentials_from_env() -> ServicePrincipalCredentials:
+        client_id = os.getenv("PDF_SERVICES_CLIENT_ID") or os.getenv("ADOBE_CLIENT_ID")
+        client_secret = os.getenv("PDF_SERVICES_CLIENT_SECRET") or os.getenv("ADOBE_CLIENT_SECRET")
+
+        if not client_id or not client_secret:
+            raise ValueError(
+                "PDF_SERVICES_CLIENT_ID/PDF_SERVICES_CLIENT_SECRET (or legacy ADOBE_* vars) must be set"
+            )
+
+        return ServicePrincipalCredentials(client_id=client_id, client_secret=client_secret)
+
     def autotag_pdf(self, input_path: str, output_path: Optional[str] = None, 
                     generate_report: bool = False, shift_headings: bool = False) -> dict:
         """
@@ -141,8 +173,15 @@ class PDFAutotagger:
             }
 
 
-def process_pdfs(pdf_paths: List[str], output_dir: Optional[str] = None, 
-                generate_report: bool = False, shift_headings: bool = False) -> List[dict]:
+def process_pdfs(
+    pdf_paths: List[str],
+    output_dir: Optional[str] = None,
+    *,
+    generate_report: bool = False,
+    shift_headings: bool = False,
+    credentials: Optional[ServicePrincipalCredentials] = None,
+    credentials_file: Optional[str] = None,
+) -> List[dict]:
     """
     Process multiple PDF files for autotagging.
     
@@ -151,11 +190,13 @@ def process_pdfs(pdf_paths: List[str], output_dir: Optional[str] = None,
         output_dir: Directory where to save tagged PDFs (optional)
         generate_report: Whether to generate accessibility reports
         shift_headings: Whether to shift headings in the documents
+        credentials: Explicit credentials object to reuse (optional)
+        credentials_file: Path to JSON file containing credentials (optional)
         
     Returns:
         List of dictionaries with results for each PDF
     """
-    autotagger = PDFAutotagger()
+    autotagger = PDFAutotagger(credentials=credentials, credentials_file=credentials_file)
     results = []
     
     for pdf_path in pdf_paths:
@@ -190,6 +231,7 @@ def main():
                         help='Shift headings in the document structure')
     parser.add_argument('--verbose', '-v', action='store_true', 
                         help='Print detailed information')
+    parser.add_argument('--credentials', '-c', help='Path to credentials JSON file')
     
     args = parser.parse_args()
     
@@ -223,7 +265,8 @@ def main():
         pdf_paths=pdf_files,
         output_dir=args.output_dir,
         generate_report=args.report,
-        shift_headings=args.shift_headings
+        shift_headings=args.shift_headings,
+        credentials_file=args.credentials,
     )
     
     # Print results

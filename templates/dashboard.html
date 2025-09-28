@@ -228,8 +228,7 @@
                                             </div>
                                         </div>
                                     </template>
-                                    <div x-show="!document.pageIssueLoading && document.pageSpecificIssueGroups.length === 0" class="text-sm text-gray-500">No page-specific issues to display.</div>
-                                    <div x-show="document.pageIssueIncomplete" class="text-sm text-yellow-800 bg-yellow-50 border border-yellow-200 rounded px-3 py-2">Detailed issues are still loading for some pages.</div>
+                                    <div x-show="!document.pageIssueLoading && document.pageSpecificIssueGroups.length === 0" class="text-sm text-gray-500">No pages have unique issues. All issues either occur on every page or are document-level.</div>
                                 </div>
                             </div>
                         </div>

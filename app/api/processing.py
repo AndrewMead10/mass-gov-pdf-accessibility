@@ -170,6 +170,8 @@ def process_pdf_background(document_id: int, db_url: str, credentials_file: str 
             output_dir=pipeline_output_dir,
             metadata={
                 "tagged_pdf_path": overall_result['tagged_pdf_path'],
+                "autotagged_pdf_path": overall_result.get('autotagged_pdf_path'),
+                "source_pdf_path": overall_result.get('source_pdf_path', document.file_path),
                 "page_count": page_count,
             },
         )

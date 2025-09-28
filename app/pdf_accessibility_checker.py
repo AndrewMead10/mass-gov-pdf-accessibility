@@ -9,7 +9,9 @@ import json
 import logging
 import os
 import sys
+import threading
 from datetime import datetime
+from typing import Dict, Optional, Tuple
 
 from adobe.pdfservices.operation.auth.service_principal_credentials import ServicePrincipalCredentials
 from adobe.pdfservices.operation.exception.exceptions import ServiceApiException, ServiceUsageException, SdkException
@@ -20,12 +22,20 @@ from adobe.pdfservices.operation.pdf_services_media_type import PDFServicesMedia
 from adobe.pdfservices.operation.pdfjobs.jobs.pdf_accessibility_checker_job import PDFAccessibilityCheckerJob
 from adobe.pdfservices.operation.pdfjobs.result.pdf_accessibility_checker_result import PDFAccessibilityCheckerResult
 
+from app.autotag_pdf import PDFAutotagger
+
 # Initialize the logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+AUTOTAG_OUTPUT_DIR = os.path.join("output_pdfs", "autotagged")
+
 class PDFAccessibilityChecker:
-    def __init__(self, credentials_file=None):
+    _autotag_lock = threading.Lock()
+    _autotag_cache: Dict[str, Tuple[int, str]] = {}
+    _autotag_events: Dict[str, threading.Event] = {}
+
+    def __init__(self, credentials_file: Optional[str] = None) -> None:
         """Initialize with credentials from file or environment variables"""
         if credentials_file and os.path.exists(credentials_file):
             self.credentials = self._load_credentials_from_file(credentials_file)
@@ -33,8 +43,9 @@ class PDFAccessibilityChecker:
             self.credentials = self._load_credentials_from_env()
 
         self.pdf_services = PDFServices(credentials=self.credentials)
+        self.autotagger = PDFAutotagger(credentials=self.credentials)
 
-    def _load_credentials_from_file(self, credentials_file):
+    def _load_credentials_from_file(self, credentials_file: str) -> ServicePrincipalCredentials:
         """Load credentials from JSON file"""
         try:
             with open(credentials_file, 'r') as f:
@@ -51,7 +62,7 @@ class PDFAccessibilityChecker:
             logger.error(f"Error loading credentials from file: {e}")
             raise
 
-    def _load_credentials_from_env(self):
+    def _load_credentials_from_env(self) -> ServicePrincipalCredentials:
         """Load credentials from environment variables"""
         client_id = os.getenv('PDF_SERVICES_CLIENT_ID')
         client_secret = os.getenv('PDF_SERVICES_CLIENT_SECRET')
@@ -61,7 +72,75 @@ class PDFAccessibilityChecker:
 
         return ServicePrincipalCredentials(client_id=client_id, client_secret=client_secret)
 
-    def check_accessibility(self, pdf_file_path, page_start=None, page_end=None, save_tagged_pdf: bool = True):
+    def _prepare_pdf(self, pdf_file_path: str) -> str:
+        """Run autotagging (once per input) and return the path used for checks."""
+        resolved_path = os.path.abspath(pdf_file_path)
+        try:
+            source_stat = os.stat(resolved_path)
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(f"PDF file not found: {pdf_file_path}") from exc
+
+        cache_key = resolved_path
+        source_mtime_ns = source_stat.st_mtime_ns
+
+        while True:
+            with self._autotag_lock:
+                cached_entry = self._autotag_cache.get(cache_key)
+                if cached_entry and cached_entry[0] == source_mtime_ns and os.path.exists(cached_entry[1]):
+                    return cached_entry[1]
+
+                wait_event = self._autotag_events.get(cache_key)
+                if wait_event is None:
+                    wait_event = threading.Event()
+                    self._autotag_events[cache_key] = wait_event
+                    break
+
+            wait_event.wait()
+
+        try:
+            os.makedirs(AUTOTAG_OUTPUT_DIR, exist_ok=True)
+            base_name = os.path.splitext(os.path.basename(resolved_path))[0]
+            output_path = os.path.join(AUTOTAG_OUTPUT_DIR, f"{base_name}_autotagged.pdf")
+
+            autotag_result = self.autotagger.autotag_pdf(
+                input_path=resolved_path,
+                output_path=output_path,
+            )
+
+            prepared_path = resolved_path
+            if autotag_result.get("success"):
+                candidate_path = autotag_result.get("output_path") or output_path
+                if candidate_path and os.path.exists(candidate_path):
+                    prepared_path = candidate_path
+                else:
+                    logger.warning(
+                        "Autotagging reported success but output missing for %s; using original",
+                        resolved_path,
+                    )
+            else:
+                logger.warning(
+                    "Autotagging failed for %s: %s",
+                    resolved_path,
+                    autotag_result.get("message", "unknown error"),
+                )
+
+            with self._autotag_lock:
+                self._autotag_cache[cache_key] = (source_mtime_ns, prepared_path)
+
+            return prepared_path
+        finally:
+            with self._autotag_lock:
+                event = self._autotag_events.pop(cache_key, None)
+            if event:
+                event.set()
+
+    def check_accessibility(
+        self,
+        pdf_file_path: str,
+        page_start: Optional[int] = None,
+        page_end: Optional[int] = None,
+        save_tagged_pdf: bool = True,
+    ) -> dict:
         """
         Check accessibility of a PDF file
 
@@ -73,14 +152,17 @@ class PDFAccessibilityChecker:
         Returns:
             dict: Contains the tagged PDF path and accessibility report JSON
         """
-        if not os.path.exists(pdf_file_path):
-            raise FileNotFoundError(f"PDF file not found: {pdf_file_path}")
-
         try:
+            original_abs_path = os.path.abspath(pdf_file_path)
+            prepared_pdf_path = self._prepare_pdf(pdf_file_path)
+            prepared_abs_path = os.path.abspath(prepared_pdf_path)
+
             logger.info(f"Starting accessibility check for: {pdf_file_path}")
+            if prepared_abs_path != original_abs_path:
+                logger.info(f"Using autotagged intermediate PDF: {prepared_pdf_path}")
 
             # Read the PDF file
-            with open(pdf_file_path, 'rb') as pdf_file:
+            with open(prepared_pdf_path, 'rb') as pdf_file:
                 input_stream = pdf_file.read()
 
             # Create asset from source file and upload
@@ -123,7 +205,7 @@ class PDFAccessibilityChecker:
             os.makedirs(output_pdfs_dir, exist_ok=True)
 
             # Generate output filename for tagged PDF
-            base_filename = os.path.splitext(os.path.basename(pdf_file_path))[0]
+            base_filename = os.path.splitext(os.path.basename(original_abs_path))[0]
             timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
             tagged_pdf_filename = f"{base_filename}_tagged_{timestamp}.pdf"
             tagged_pdf_path = os.path.join(output_pdfs_dir, tagged_pdf_filename)
@@ -139,9 +221,15 @@ class PDFAccessibilityChecker:
                 tagged_pdf_path = None
                 logger.info(f"Accessibility check completed (report only for pages {page_start}-{page_end})")
 
+            autotagged_pdf_path = None
+            if prepared_abs_path != original_abs_path:
+                autotagged_pdf_path = prepared_pdf_path
+
             return {
                 'tagged_pdf_path': tagged_pdf_path,
-                'accessibility_report_json': json.loads(accessibility_report_data.decode('utf-8'))
+                'accessibility_report_json': json.loads(accessibility_report_data.decode('utf-8')),
+                'source_pdf_path': original_abs_path,
+                'autotagged_pdf_path': autotagged_pdf_path,
             }
 
         except (ServiceApiException, ServiceUsageException, SdkException) as e:

@@ -54,18 +54,17 @@ function dashboardHandler() {
             document.pageIssueError = null;
             document.pageIssueIncomplete = false;
             try {
-                const resp = await fetch(`/api/documents/${document.id}/pages`);
+                const resp = await fetch(`/api/documents/${document.id}/pages/detailed`);
                 if (!resp.ok) throw new Error('Failed to load page results');
                 const pages = await resp.json();
                 document.page_results = pages.map(p => ({
                     ...p,
                     accessibility_report_json: this.normalizeReport(p.accessibility_report_json),
-                    _issues: null
+                    _issues: this.getIssuesFromReport(this.normalizeReport(p.accessibility_report_json))
                 }));
 
-                await this.populatePageIssueDetails(document);
                 this.computePageIssueGroups(document);
-                document.pageIssueIncomplete = document.page_results.some(page => !Array.isArray(page._issues));
+                document.pageIssueIncomplete = false; // No longer needed since we get all data at once
             } catch (e) {
                 console.error('Failed to load page results:', e);
                 showNotification('Failed to load page results', 'error');
@@ -156,35 +155,6 @@ function dashboardHandler() {
             }
         },
 
-        async populatePageIssueDetails(document) {
-            if (!document.page_results || document.page_results.length === 0) {
-                return;
-            }
-
-            const failedPages = [];
-            for (const page of document.page_results) {
-                if (Array.isArray(page._issues)) {
-                    continue;
-                }
-                try {
-                    const resp = await fetch(`/api/documents/${document.id}/pages/${page.page_number}`);
-                    if (!resp.ok) {
-                        throw new Error(`Failed to load details for page ${page.page_number}`);
-                    }
-                    const detail = await resp.json();
-                    const report = this.normalizeReport(detail.accessibility_report_json);
-                    page.accessibility_report_json = report;
-                    page._issues = this.getIssuesFromReport(report);
-                } catch (error) {
-                    console.error('Failed to populate page detail:', error);
-                    failedPages.push(page.page_number);
-                }
-            }
-
-            if (failedPages.length > 0) {
-                document.pageIssueError = `Unable to load issues for page${failedPages.length > 1 ? 's' : ''} ${failedPages.join(', ')}`;
-            }
-        },
 
         getIssuesFromReport(report) {
             const normalizedReport = this.normalizeReport(report);
@@ -209,7 +179,7 @@ function dashboardHandler() {
         },
 
         getPageIssues(page) {
-            return Array.isArray(page._issues) ? page._issues : this.getIssuesFromReport(page.accessibility_report_json);
+            return Array.isArray(page._issues) ? page._issues : [];
         },
 
         getDocumentIssues(document) {
@@ -225,9 +195,8 @@ function dashboardHandler() {
 
             const issueMap = new Map();
             const totalPages = document.page_results.length;
-            const populatedPages = document.page_results.filter(page => Array.isArray(this.getPageIssues(page)));
 
-            populatedPages.forEach(page => {
+            document.page_results.forEach(page => {
                 const issues = this.getPageIssues(page);
                 const seen = new Set();
                 issues.forEach(issue => {
@@ -250,7 +219,7 @@ function dashboardHandler() {
                 }
             });
 
-            const pageSpecificIssueGroups = populatedPages.map(page => {
+            const pageSpecificIssueGroups = document.page_results.map(page => {
                 const allIssues = this.getPageIssues(page);
                 const issues = allIssues.filter(issue => !sharedKeys.has(this.buildIssueKey(issue)));
                 return {
@@ -258,7 +227,7 @@ function dashboardHandler() {
                     issues,
                     allIssues
                 };
-            });
+            }).filter(group => group.issues.length > 0); // Only include pages with specific issues
 
             document.sharedPageIssues = sharedIssues;
             document.pageSpecificIssueGroups = pageSpecificIssueGroups;
