@@ -116,7 +116,7 @@
                 <!-- Document-Level Issues and Per-Page Summary -->
                 <div x-show="document.expanded" class="p-6 space-y-6">
                     <!-- Document-level non-passed rules -->
-                    <div x-data="{ open: true, showAll: false }" class="border border-gray-200 rounded-lg">
+                    <div x-data="{ open: false, showAll: false }" class="border border-gray-200 rounded-lg">
                         <button type="button" @click="open = !open" class="w-full flex items-center justify-between px-4 py-3 text-left">
                             <span class="text-lg font-medium text-gray-900">Document-Level Issues</span>
                             <svg class="h-5 w-5 text-gray-500 transform transition-transform" :class="{ 'rotate-180': open }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -161,7 +161,7 @@
                             <div x-show="document.pageIssueLoading" class="text-sm text-gray-500">Loading detailed issues…</div>
                             <div x-show="document.pageIssueError" class="text-sm text-yellow-800 bg-yellow-50 border border-yellow-200 rounded px-3 py-2" x-text="document.pageIssueError"></div>
 
-                            <div x-data="{ open: true }" class="border border-gray-200 rounded-lg">
+                            <div x-data="{ open: false }" class="border border-gray-200 rounded-lg">
                                 <button type="button" @click="open = !open" class="w-full flex items-center justify-between px-4 py-3 text-left">
                                     <span class="text-lg font-medium text-gray-900">Issues Across All Pages</span>
                                     <svg class="h-5 w-5 text-gray-500 transform transition-transform" :class="{ 'rotate-180': open }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -183,7 +183,7 @@
                                 </div>
                             </div>
 
-                            <div x-data="{ open: true }" class="border border-gray-200 rounded-lg">
+                            <div x-data="{ open: false }" class="border border-gray-200 rounded-lg">
                                 <button type="button" @click="open = !open" class="w-full flex items-center justify-between px-4 py-3 text-left">
                                     <span class="text-lg font-medium text-gray-900">Page-Specific Issues</span>
                                     <svg class="h-5 w-5 text-gray-500 transform transition-transform" :class="{ 'rotate-180': open }" fill="none" stroke="currentColor" viewBox="0 0 24 24">

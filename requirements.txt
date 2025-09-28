@@ -11,3 +11,8 @@ alembic
 # Existing Adobe PDF Services dependencies
 pdfservices-sdk
 pypdf
+
+PyPDF2
+python-dotenv
+openai
+reportlab

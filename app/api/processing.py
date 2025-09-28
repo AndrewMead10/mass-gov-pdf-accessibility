@@ -1,6 +1,9 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 import os
+import threading
+from typing import Iterable, List, Optional, Tuple
 
 from app.database import get_db
 from app import crud
@@ -9,6 +12,74 @@ from app.pdf_accessibility_checker import PDFAccessibilityChecker
 from app.schemas import ProcessingStatusResponse
 
 router = APIRouter()
+
+# Default pool size can be overridden via PAGE_PROCESSING_WORKERS env var
+PAGE_WORKER_FALLBACK = 8
+
+
+def _resolve_worker_count(total_pages: int) -> int:
+    """Determine how many workers to use for per-page processing."""
+    if total_pages <= 0:
+        return 0
+
+    configured = os.getenv("PAGE_PROCESSING_WORKERS")
+    workers = PAGE_WORKER_FALLBACK
+    if configured:
+        try:
+            workers = int(configured)
+        except ValueError:
+            # Fall back to default when the env var is not an integer
+            workers = PAGE_WORKER_FALLBACK
+
+    workers = max(1, workers)
+    return min(total_pages, workers)
+
+
+def _collect_page_reports(
+    file_path: str,
+    page_numbers: Iterable[int],
+    credentials_file: Optional[str],
+) -> List[Tuple[int, dict]]:
+    """Run per-page accessibility checks in parallel and return ordered results."""
+    pages = list(page_numbers)
+    if not pages:
+        return []
+
+    max_workers = _resolve_worker_count(len(pages))
+    thread_local = threading.local()
+
+    def _get_checker() -> PDFAccessibilityChecker:
+        checker = getattr(thread_local, "checker", None)
+        if checker is None:
+            checker = PDFAccessibilityChecker(credentials_file=credentials_file)
+            thread_local.checker = checker
+        return checker
+
+    def _process_page(page_num: int) -> Tuple[int, dict]:
+        checker = _get_checker()
+        page_result = checker.check_accessibility(
+            file_path,
+            page_start=page_num,
+            page_end=page_num,
+            save_tagged_pdf=False,
+        )
+        return page_num, page_result["accessibility_report_json"]
+
+    results: List[Tuple[int, dict]] = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_page = {executor.submit(_process_page, page): page for page in pages}
+        for future in as_completed(future_to_page):
+            page_num = future_to_page[future]
+            try:
+                results.append(future.result())
+            except Exception as exc:
+                # Cancel any pending tasks before bubbling up the error
+                for pending_future in future_to_page:
+                    pending_future.cancel()
+                raise RuntimeError(f"Failed to process page {page_num}: {exc}") from exc
+
+    results.sort(key=lambda item: item[0])
+    return results
 
 def process_pdf_background(document_id: int, db_url: str, credentials_file: str = None):
     """Background task to process PDF"""
@@ -44,19 +115,18 @@ def process_pdf_background(document_id: int, db_url: str, credentials_file: str 
             # If unable to read page count, mark as failed
             raise RuntimeError(f"Failed to read PDF page count: {e}")
 
-        # 3) Analyze each page individually and store results
-        for page_num in range(1, page_count + 1):
-            page_result = checker.check_accessibility(
-                document.file_path,
-                page_start=page_num,
-                page_end=page_num,
-                save_tagged_pdf=False,
-            )
+        # 3) Analyze each page in parallel and store results
+        page_reports = _collect_page_reports(
+            file_path=document.file_path,
+            page_numbers=range(1, page_count + 1),
+            credentials_file=credentials_file,
+        )
+        for page_num, accessibility_report in page_reports:
             crud.create_page_result(
                 db=db,
                 document_id=document_id,
                 page_number=page_num,
-                accessibility_report=page_result['accessibility_report_json']
+                accessibility_report=accessibility_report,
             )
 
         # 4) Update document with overall results and mark as completed
@@ -127,8 +197,6 @@ def process_pdf_pages_background(document_id: int, db_url: str, credentials_file
         if not document:
             return
 
-        checker = PDFAccessibilityChecker(credentials_file=credentials_file)
-
         # Determine page count
         try:
             from pypdf import PdfReader
@@ -137,22 +205,25 @@ def process_pdf_pages_background(document_id: int, db_url: str, credentials_file
         except Exception as e:
             raise RuntimeError(f"Failed to read PDF page count: {e}")
 
-        # Create missing page results only
-        for page_num in range(1, page_count + 1):
-            existing = crud.get_page_result(db, document_id=document_id, page_number=page_num)
-            if existing:
-                continue
-            page_result = checker.check_accessibility(
-                document.file_path,
-                page_start=page_num,
-                page_end=page_num,
-                save_tagged_pdf=False,
-            )
+        # Create missing page results in parallel
+        missing_pages = [
+            page_num
+            for page_num in range(1, page_count + 1)
+            if not crud.get_page_result(db, document_id=document_id, page_number=page_num)
+        ]
+
+        page_reports = _collect_page_reports(
+            file_path=document.file_path,
+            page_numbers=missing_pages,
+            credentials_file=credentials_file,
+        )
+
+        for page_num, accessibility_report in page_reports:
             crud.create_page_result(
                 db=db,
                 document_id=document_id,
                 page_number=page_num,
-                accessibility_report=page_result['accessibility_report_json']
+                accessibility_report=accessibility_report,
             )
     finally:
         db.close()

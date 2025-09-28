@@ -87,6 +87,82 @@ python pdf_accessibility_checker.py your_document.pdf --verbose
 python pdf_accessibility_checker.py --help
 ```
 
+### Web Application
+
+To run the web application:
+
+```bash
+# Activate virtual environment
+source .venv/bin/activate
+
+# Run the web application
+python -m app.main
+```
+
+The web application will be available at `http://localhost:8000`
+
+## Docker Deployment
+
+### Using Docker Compose (Recommended)
+
+1. **Build and run with Docker Compose:**
+   ```bash
+   docker-compose up --build
+   ```
+
+2. **Run in detached mode:**
+   ```bash
+   docker-compose up -d --build
+   ```
+
+3. **Stop the application:**
+   ```bash
+   docker-compose down
+   ```
+
+### Using Docker directly
+
+1. **Build the Docker image:**
+   ```bash
+   docker build -t pdf-accessibility-checker .
+   ```
+
+2. **Run the container:**
+   ```bash
+   docker run -p 8000:8000 \
+     -v ./input_pdfs:/app/input_pdfs \
+     -v ./output_pdfs:/app/output_pdfs \
+     -v ./pdf_accessibility.db:/app/pdf_accessibility.db \
+     -v ./pdfservices-api-credentials.json:/app/pdfservices-api-credentials.json \
+     pdf-accessibility-checker
+   ```
+
+3. **Run in detached mode:**
+   ```bash
+   docker run -d -p 8000:8000 \
+     -v ./input_pdfs:/app/input_pdfs \
+     -v ./output_pdfs:/app/output_pdfs \
+     -v ./pdf_accessibility.db:/app/pdf_accessibility.db \
+     -v ./pdfservices-api-credentials.json:/app/pdfservices-api-credentials.json \
+     --name pdf-checker \
+     pdf-accessibility-checker
+   ```
+
+### Docker Prerequisites
+
+- Docker and Docker Compose installed
+- Credentials file `pdfservices-api-credentials.json` in the project root
+- Create directories for volumes:
+  ```bash
+  mkdir -p input_pdfs output_pdfs
+  ```
+
+The Docker setup includes:
+- Health checks to monitor application status
+- Persistent volumes for PDF files and database
+- Automatic restart unless stopped manually
+- Port 8000 exposed for web access
+
 ## Output
 
 The script creates a timestamped output directory containing:
