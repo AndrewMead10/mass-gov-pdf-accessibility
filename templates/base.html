@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}PDF Accessibility Checker{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <nav class="bg-blue-600 shadow-lg">
+        <div class="max-w-7xl mx-auto px-4">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <a href="/" class="text-white text-xl font-bold">PDF Accessibility Checker</a>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <a href="/" class="text-white hover:text-blue-200">Upload</a>
+                    <a href="/dashboard" class="text-white hover:text-blue-200">Dashboard</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto py-6 px-4">
+        {% block content %}{% endblock %}
+    </main>
+
+    <script src="/static/js/utils.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

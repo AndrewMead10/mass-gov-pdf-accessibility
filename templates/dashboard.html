@@ -1,0 +1,246 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - PDF Accessibility Checker{% endblock %}
+
+{% block content %}
+<div x-data="dashboardHandler()" x-init="init()">
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-3xl font-bold text-gray-900">Document Dashboard</h1>
+        <div class="flex space-x-3">
+            <button
+                @click="refreshDocuments()"
+                class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+            >
+                Refresh
+            </button>
+            <a
+                href="/"
+                class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+            >
+                Upload New PDFs
+            </a>
+        </div>
+    </div>
+
+    <div x-show="documents.length === 0" class="text-center py-12">
+        <svg class="mx-auto h-12 w-12 text-gray-400 mb-4" stroke="currentColor" fill="none" viewBox="0 0 48 48">
+            <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <h3 class="text-lg font-medium text-gray-900 mb-2">No documents uploaded</h3>
+        <p class="text-gray-600">Upload your first PDF to get started with accessibility checking.</p>
+    </div>
+
+    <div class="space-y-4">
+        <template x-for="document in documents" :key="document.id">
+            <div class="bg-white rounded-lg shadow-md">
+                <!-- Document Header -->
+                <div class="p-6 border-b border-gray-200">
+                    <div class="flex items-center justify-between">
+                        <div class="flex-1">
+                            <h3 class="text-lg font-medium text-gray-900" x-text="document.original_filename"></h3>
+                            <p class="text-sm text-gray-500" x-text="formatDate(document.upload_timestamp)"></p>
+                        </div>
+                        <div class="flex items-center space-x-3">
+                            <!-- Status Badge -->
+                            <span
+                                class="px-3 py-1 rounded-full text-xs font-medium"
+                                :class="getStatusColor(document.status)"
+                                x-text="getStatusText(document.status)"
+                            ></span>
+
+                            <!-- Process Button -->
+                            <button
+                                x-show="document.status === 'pending'"
+                                @click="processDocument(document.id)"
+                                class="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
+                            >
+                                Process
+                            </button>
+
+                            <!-- Download Button -->
+                            <button
+                                x-show="document.status === 'completed'"
+                                @click="downloadPDF(document.id)"
+                                class="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700"
+                            >
+                                Download
+                            </button>
+
+                            <!-- Delete Button -->
+                            <button
+                                @click="deleteDocument(document.id)"
+                                class="px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700"
+                            >
+                                Delete
+                            </button>
+
+                            <!-- Expand/Collapse Toggle -->
+                            <button
+                                x-show="document.status === 'completed'"
+                                @click="toggleDocumentExpand(document)"
+                                class="p-1 text-gray-400 hover:text-gray-600"
+                            >
+                                <svg
+                                    class="h-5 w-5 transform transition-transform"
+                                    :class="{ 'rotate-180': document.expanded }"
+                                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                                >
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Summary Stats -->
+                    <div x-show="document.status === 'completed'" class="mt-4 grid grid-cols-3 gap-4">
+                        <div class="text-center p-3 bg-red-50 rounded">
+                            <div class="text-2xl font-bold text-red-600" x-text="document.total_failed"></div>
+                            <div class="text-sm text-red-800">Failed</div>
+                        </div>
+                        <div class="text-center p-3 bg-yellow-50 rounded">
+                            <div class="text-2xl font-bold text-yellow-600" x-text="document.needs_manual_check"></div>
+                            <div class="text-sm text-yellow-800">Manual Check</div>
+                        </div>
+                        <div class="text-center p-3 bg-green-50 rounded">
+                            <div class="text-2xl font-bold text-green-600" x-text="document.total_passed"></div>
+                            <div class="text-sm text-green-800">Passed</div>
+                        </div>
+                    </div>
+
+                    <!-- Error Message -->
+                    <div x-show="document.status === 'failed' && document.error_message" class="mt-4 p-3 bg-red-50 border border-red-200 rounded">
+                        <p class="text-sm text-red-800" x-text="document.error_message"></p>
+                    </div>
+                </div>
+
+                <!-- Document-Level Issues and Per-Page Summary -->
+                <div x-show="document.expanded" class="p-6 space-y-6">
+                    <!-- Document-level non-passed rules -->
+                    <div x-data="{ open: true, showAll: false }" class="border border-gray-200 rounded-lg">
+                        <button type="button" @click="open = !open" class="w-full flex items-center justify-between px-4 py-3 text-left">
+                            <span class="text-lg font-medium text-gray-900">Document-Level Issues</span>
+                            <svg class="h-5 w-5 text-gray-500 transform transition-transform" :class="{ 'rotate-180': open }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                            </svg>
+                        </button>
+                        <div x-show="open" class="px-4 pb-4 space-y-2" x-transition>
+                            <template x-for="issue in (showAll ? getDocumentIssues(document) : getDocumentIssues(document).slice(0, 8))" :key="issue.rule + issue.section + issue.status">
+                                <div class="flex items-center justify-between p-3 rounded" :class="getRuleStatusColor(issue.status)">
+                                    <div class="flex-1 pr-2">
+                                        <div class="font-medium" x-text="issue.rule"></div>
+                                        <div class="text-xs text-gray-600" x-text="issue.description"></div>
+                                        <div class="text-xs text-gray-500 mt-1">Section: <span x-text="issue.section"></span></div>
+                                    </div>
+                                    <span class="px-2 py-1 rounded text-xs font-medium" :class="getRuleStatusBadge(issue.status)" x-text="issue.status"></span>
+                                </div>
+                            </template>
+                            <div class="mt-2" x-show="getDocumentIssues(document).length > 8">
+                                <button @click="showAll = !showAll" class="text-sm text-blue-600 hover:underline">
+                                    <span x-text="showAll ? 'Show less' : 'Show all'"></span>
+                                </button>
+                            </div>
+                            <div x-show="getDocumentIssues(document).length === 0" class="text-sm text-gray-500">No document-level issues.</div>
+                        </div>
+                    </div>
+
+                    <!-- Per-Page Summary -->
+                    <div>
+                        <h4 class="text-lg font-medium text-gray-900 mb-3">Per-Page Accessibility Summary</h4>
+
+                        <div x-show="loadingPages[document.id]" class="text-sm text-gray-500">Loading page summaries…</div>
+                        <div x-show="!loadingPages[document.id] && (!document.page_results || document.page_results.length === 0)" class="text-sm text-gray-600 flex items-center gap-3">
+                            <span>No page results available.</span>
+                            <button
+                                class="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
+                                @click="generatePageSummaries(document)"
+                                :disabled="pageGenerateLoading[document.id]"
+                            >Generate per-page summaries</button>
+                        </div>
+
+                        <div x-show="document.page_results && document.page_results.length > 0" class="space-y-4">
+                            <div x-show="document.pageIssueLoading" class="text-sm text-gray-500">Loading detailed issues…</div>
+                            <div x-show="document.pageIssueError" class="text-sm text-yellow-800 bg-yellow-50 border border-yellow-200 rounded px-3 py-2" x-text="document.pageIssueError"></div>
+
+                            <div x-data="{ open: true }" class="border border-gray-200 rounded-lg">
+                                <button type="button" @click="open = !open" class="w-full flex items-center justify-between px-4 py-3 text-left">
+                                    <span class="text-lg font-medium text-gray-900">Issues Across All Pages</span>
+                                    <svg class="h-5 w-5 text-gray-500 transform transition-transform" :class="{ 'rotate-180': open }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                                    </svg>
+                                </button>
+                                <div x-show="open" class="px-4 pb-4 space-y-2" x-transition>
+                                    <template x-for="issue in document.sharedPageIssues" :key="issue.rule + issue.section + issue.status">
+                                        <div class="flex items-center justify-between p-3 rounded" :class="getRuleStatusColor(issue.status)">
+                                            <div class="flex-1 pr-2">
+                                                <div class="font-medium" x-text="issue.rule"></div>
+                                                <div class="text-xs text-gray-600" x-text="issue.description"></div>
+                                                <div class="text-xs text-gray-500 mt-1">Section: <span x-text="issue.section"></span></div>
+                                            </div>
+                                            <span class="px-2 py-1 rounded text-xs font-medium" :class="getRuleStatusBadge(issue.status)" x-text="issue.status"></span>
+                                        </div>
+                                    </template>
+                                    <div x-show="!document.pageIssueLoading && document.sharedPageIssues.length === 0" class="text-sm text-gray-500">No issues occur on every page.</div>
+                                </div>
+                            </div>
+
+                            <div x-data="{ open: true }" class="border border-gray-200 rounded-lg">
+                                <button type="button" @click="open = !open" class="w-full flex items-center justify-between px-4 py-3 text-left">
+                                    <span class="text-lg font-medium text-gray-900">Page-Specific Issues</span>
+                                    <svg class="h-5 w-5 text-gray-500 transform transition-transform" :class="{ 'rotate-180': open }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                                    </svg>
+                                </button>
+                                <div x-show="open" class="px-4 pb-4 space-y-3" x-transition>
+                                    <template x-for="group in document.pageSpecificIssueGroups" :key="group.page_number">
+                                        <div class="border border-gray-100 rounded-md" x-data="{ showFull: false }">
+                                            <div class="flex items-center justify-between px-3 py-2 border-b border-gray-100">
+                                                <div class="font-medium text-gray-900">Page <span x-text="group.page_number"></span></div>
+                                                <button type="button" class="text-sm text-blue-600 hover:underline" @click="showFull = !showFull">
+                                                    <span x-text="showFull ? 'Hide all issues' : 'Show all issues'"></span>
+                                                </button>
+                                            </div>
+                                            <div class="px-3 py-3 space-y-2">
+                                                <template x-for="issue in group.issues" :key="issue.rule + issue.section + issue.status">
+                                                    <div class="flex items-center justify-between p-3 rounded" :class="getRuleStatusColor(issue.status)">
+                                                        <div class="flex-1 pr-2">
+                                                            <div class="font-medium" x-text="issue.rule"></div>
+                                                            <div class="text-xs text-gray-600" x-text="issue.description"></div>
+                                                            <div class="text-xs text-gray-500 mt-1">Section: <span x-text="issue.section"></span></div>
+                                                        </div>
+                                                        <span class="px-2 py-1 rounded text-xs font-medium" :class="getRuleStatusBadge(issue.status)" x-text="issue.status"></span>
+                                                    </div>
+                                                </template>
+                                                <div x-show="group.issues.length === 0" class="text-sm text-gray-500">No unique issues on this page.</div>
+                                            </div>
+                                            <div x-show="showFull" class="px-3 pb-3 space-y-2 border-t border-gray-100" x-transition>
+                                                <div class="text-xs uppercase tracking-wide text-gray-500">All issues</div>
+                                                <template x-for="issue in group.allIssues" :key="issue.rule + issue.section + issue.status">
+                                                    <div class="flex items-center justify-between p-3 rounded" :class="getRuleStatusColor(issue.status)">
+                                                        <div class="flex-1 pr-2">
+                                                            <div class="font-medium" x-text="issue.rule"></div>
+                                                            <div class="text-xs text-gray-600" x-text="issue.description"></div>
+                                                            <div class="text-xs text-gray-500 mt-1">Section: <span x-text="issue.section"></span></div>
+                                                        </div>
+                                                        <span class="px-2 py-1 rounded text-xs font-medium" :class="getRuleStatusBadge(issue.status)" x-text="issue.status"></span>
+                                                    </div>
+                                                </template>
+                                                <div x-show="group.allIssues.length === 0" class="text-sm text-gray-500">No issues reported on this page.</div>
+                                            </div>
+                                        </div>
+                                    </template>
+                                    <div x-show="!document.pageIssueLoading && document.pageSpecificIssueGroups.length === 0" class="text-sm text-gray-500">No page-specific issues to display.</div>
+                                    <div x-show="document.pageIssueIncomplete" class="text-sm text-yellow-800 bg-yellow-50 border border-yellow-200 rounded px-3 py-2">Detailed issues are still loading for some pages.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </template>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/dashboard.js"></script>
+{% endblock %}

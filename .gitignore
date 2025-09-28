@@ -1,4 +1,7 @@
 .venv
 pdfservices-api-credentials.json
-output
 *.pdf
+output
+__pycache__
+*.db
+

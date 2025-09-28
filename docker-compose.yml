@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./input_pdfs:/app/input_pdfs
+      - ./output_pdfs:/app/output_pdfs
+      - ./pdf_accessibility.db:/app/pdf_accessibility.db
+      - ./pdfservices-api-credentials.json:/app/pdfservices-api-credentials.json
+    environment:
+      - PYTHONPATH=/app
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

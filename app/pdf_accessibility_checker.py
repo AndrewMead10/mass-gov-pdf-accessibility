@@ -61,18 +61,17 @@ class PDFAccessibilityChecker:
 
         return ServicePrincipalCredentials(client_id=client_id, client_secret=client_secret)
 
-    def check_accessibility(self, pdf_file_path, output_dir="output", page_start=None, page_end=None):
+    def check_accessibility(self, pdf_file_path, page_start=None, page_end=None, save_tagged_pdf: bool = True):
         """
         Check accessibility of a PDF file
 
         Args:
             pdf_file_path (str): Path to the PDF file to check
-            output_dir (str): Directory to save output files
             page_start (int, optional): Starting page for accessibility check
             page_end (int, optional): Ending page for accessibility check
 
         Returns:
-            dict: Paths to the generated PDF and JSON reports
+            dict: Contains the tagged PDF path and accessibility report JSON
         """
         if not os.path.exists(pdf_file_path):
             raise FileNotFoundError(f"PDF file not found: {pdf_file_path}")
@@ -115,30 +114,34 @@ class PDFAccessibilityChecker:
             report_asset: CloudAsset = pdf_services_response.get_result().get_report()
             stream_report: StreamAsset = self.pdf_services.get_content(report_asset)
 
-            # Create output directory
-            timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+            # Get the binary data
+            tagged_pdf_data = stream_asset.get_input_stream()
+            accessibility_report_data = stream_report.get_input_stream()
+
+            # Create output_pdfs directory if it doesn't exist
+            output_pdfs_dir = "output_pdfs"
+            os.makedirs(output_pdfs_dir, exist_ok=True)
+
+            # Generate output filename for tagged PDF
             base_filename = os.path.splitext(os.path.basename(pdf_file_path))[0]
-            output_subdir = os.path.join(output_dir, f"{base_filename}_{timestamp}")
-            os.makedirs(output_subdir, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+            tagged_pdf_filename = f"{base_filename}_tagged_{timestamp}.pdf"
+            tagged_pdf_path = os.path.join(output_pdfs_dir, tagged_pdf_filename)
 
-            # Save the tagged PDF
-            pdf_output_path = os.path.join(output_subdir, f"{base_filename}_tagged.pdf")
-            with open(pdf_output_path, "wb") as file:
-                file.write(stream_asset.get_input_stream())
-
-            # Save the accessibility report
-            json_output_path = os.path.join(output_subdir, f"{base_filename}_accessibility_report.json")
-            with open(json_output_path, "wb") as file:
-                file.write(stream_report.get_input_stream())
-
-            logger.info(f"Accessibility check completed successfully")
-            logger.info(f"Tagged PDF saved to: {pdf_output_path}")
-            logger.info(f"Accessibility report saved to: {json_output_path}")
+            if save_tagged_pdf:
+                # Save the tagged PDF to output_pdfs folder
+                with open(tagged_pdf_path, "wb") as file:
+                    file.write(tagged_pdf_data)
+                logger.info(f"Accessibility check completed successfully")
+                logger.info(f"Tagged PDF saved to: {tagged_pdf_path}")
+            else:
+                # When not saving, clear the path to avoid confusion
+                tagged_pdf_path = None
+                logger.info(f"Accessibility check completed (report only for pages {page_start}-{page_end})")
 
             return {
-                'tagged_pdf': pdf_output_path,
-                'accessibility_report': json_output_path,
-                'output_directory': output_subdir
+                'tagged_pdf_path': tagged_pdf_path,
+                'accessibility_report_json': json.loads(accessibility_report_data.decode('utf-8'))
             }
 
         except (ServiceApiException, ServiceUsageException, SdkException) as e:
@@ -164,15 +167,32 @@ def main():
         checker = PDFAccessibilityChecker(credentials_file=args.credentials)
         result = checker.check_accessibility(
             pdf_file_path=args.pdf_file,
-            output_dir=args.output,
             page_start=args.page_start,
             page_end=args.page_end
         )
 
+        # Create output directory for CLI usage
+        timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+        base_filename = os.path.splitext(os.path.basename(args.pdf_file))[0]
+        output_subdir = os.path.join(args.output, f"{base_filename}_{timestamp}")
+        os.makedirs(output_subdir, exist_ok=True)
+
+        # Save/copy the tagged PDF into the CLI output directory
+        pdf_output_path = os.path.join(output_subdir, f"{base_filename}_tagged.pdf")
+        if result['tagged_pdf_path'] and os.path.exists(result['tagged_pdf_path']):
+            import shutil
+            shutil.copyfile(result['tagged_pdf_path'], pdf_output_path)
+
+        # Save the accessibility report JSON into the CLI output directory
+        json_output_path = os.path.join(output_subdir, f"{base_filename}_accessibility_report.json")
+        with open(json_output_path, "w", encoding="utf-8") as file:
+            json.dump(result['accessibility_report_json'], file, ensure_ascii=False, indent=2)
+
         print(f"\n✅ Accessibility check completed successfully!")
-        print(f"📄 Tagged PDF: {result['tagged_pdf']}")
-        print(f"📊 Accessibility Report: {result['accessibility_report']}")
-        print(f"📁 Output Directory: {result['output_directory']}")
+        if os.path.exists(pdf_output_path):
+            print(f"📄 Tagged PDF: {pdf_output_path}")
+        print(f"📊 Accessibility Report: {json_output_path}")
+        print(f"📁 Output Directory: {output_subdir}")
 
     except Exception as e:
         print(f"❌ Error: {e}", file=sys.stderr)
