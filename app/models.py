@@ -1,4 +1,15 @@
-from sqlalchemy import Column, Integer, String, DateTime, JSON, Enum as SQLEnum, ForeignKey, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    Enum as SQLEnum,
+    ForeignKey,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import enum
@@ -39,6 +50,12 @@ class PDFDocument(Base):
         cascade="all, delete-orphan"
     )
 
+    pipeline_runs = relationship(
+        "PipelineRun",
+        back_populates="document",
+        cascade="all, delete-orphan"
+    )
+
 
 class PDFPageResult(Base):
     __tablename__ = "pdf_page_results"
@@ -60,3 +77,46 @@ class PDFPageResult(Base):
     __table_args__ = (
         UniqueConstraint('document_id', 'page_number', name='uix_document_page'),
     )
+
+
+class PipelineRunStatus(enum.Enum):
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    PARTIAL = "partial"
+
+
+class PipelineRun(Base):
+    __tablename__ = "pipeline_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    document_id = Column(Integer, ForeignKey("pdf_documents.id"), nullable=False, index=True)
+    pipeline_slug = Column(String, nullable=False, index=True)
+    attempt_resolve = Column(Boolean, default=False)
+    status = Column(SQLEnum(PipelineRunStatus), nullable=False)
+    identify_payload = Column(JSON, nullable=True)
+    resolve_payload = Column(JSON, nullable=True)
+    errors = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime, default=datetime.utcnow)
+
+    document = relationship("PDFDocument", back_populates="pipeline_runs")
+    issues = relationship(
+        "PipelineIssue",
+        back_populates="pipeline_run",
+        cascade="all, delete-orphan"
+    )
+
+
+class PipelineIssue(Base):
+    __tablename__ = "pipeline_issues"
+
+    id = Column(Integer, primary_key=True, index=True)
+    pipeline_run_id = Column(Integer, ForeignKey("pipeline_runs.id"), nullable=False, index=True)
+    issue_code = Column(String, nullable=False)
+    summary = Column(String, nullable=False)
+    detail = Column(Text, nullable=False)
+    pages = Column(JSON, nullable=False)
+    wcag_references = Column(JSON, nullable=True)
+    extra = Column(JSON, nullable=True)
+
+    pipeline_run = relationship("PipelineRun", back_populates="issues")

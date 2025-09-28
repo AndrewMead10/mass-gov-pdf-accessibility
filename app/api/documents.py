@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-from typing import List
+from typing import Any, Dict, List
 import os
 
 from app.database import get_db
@@ -11,9 +11,42 @@ from app.schemas import (
     ProcessingStatusResponse,
     PDFPageResultResponse,
     PDFPageSummaryResponse,
+    PipelineRunResponse,
 )
 
 router = APIRouter()
+
+
+def _serialize_pipeline_runs(runs) -> List[Dict[str, Any]]:
+    payload: List[Dict[str, Any]] = []
+    for run in runs:
+        issues = sorted(run.issues, key=lambda issue: issue.id)
+        payload.append({
+            'id': run.id,
+            'document_id': run.document_id,
+            'pipeline_slug': run.pipeline_slug,
+            'attempt_resolve': run.attempt_resolve,
+            'status': run.status,
+            'identify_payload': run.identify_payload,
+            'resolve_payload': run.resolve_payload,
+            'errors': run.errors,
+            'created_at': run.created_at,
+            'completed_at': run.completed_at,
+            'issues': [
+                {
+                    'id': issue.id,
+                    'pipeline_run_id': issue.pipeline_run_id,
+                    'issue_code': issue.issue_code,
+                    'summary': issue.summary,
+                    'detail': issue.detail,
+                    'pages': issue.pages or [],
+                    'wcag_references': issue.wcag_references or [],
+                    'extra': issue.extra,
+                }
+                for issue in issues
+            ],
+        })
+    return payload
 
 @router.get("/documents", response_model=List[PDFDocumentResponse])
 def get_documents(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
@@ -40,6 +73,7 @@ def get_documents(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
             'needs_manual_check': d.needs_manual_check,
             'error_message': d.error_message,
             'page_results_count': count,
+            'pipeline_runs_count': crud.count_pipeline_runs_for_document(db, d.id),
         }
         enriched.append(d_dict)
     return enriched
@@ -51,6 +85,8 @@ def get_document(document_id: int, db: Session = Depends(get_db)):
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
     count = crud.count_page_results_for_document(db, document_id)
+    pipeline_runs = crud.get_pipeline_runs_for_document(db, document_id)
+    pipeline_runs_payload = _serialize_pipeline_runs(pipeline_runs)
     d = document
     return {
         'id': d.id,
@@ -68,6 +104,8 @@ def get_document(document_id: int, db: Session = Depends(get_db)):
         'needs_manual_check': d.needs_manual_check,
         'error_message': d.error_message,
         'page_results_count': count,
+        'pipeline_runs_count': len(pipeline_runs_payload),
+        'pipeline_runs': pipeline_runs_payload,
     }
 
 @router.get("/status/{document_id}", response_model=ProcessingStatusResponse)
@@ -122,6 +160,17 @@ def get_document_page_detail(document_id: int, page_number: int, db: Session = D
     if page_result is None:
         raise HTTPException(status_code=404, detail="Page result not found")
     return page_result
+
+
+@router.get("/documents/{document_id}/pipelines", response_model=List[PipelineRunResponse])
+def get_document_pipeline_runs(document_id: int, db: Session = Depends(get_db)):
+    """Return detailed pipeline runs for a document."""
+    document = crud.get_pdf_document(db, document_id=document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    runs = crud.get_pipeline_runs_for_document(db, document_id=document_id)
+    return runs
 
 @router.delete("/documents/{document_id}")
 def delete_document(document_id: int, db: Session = Depends(get_db)):
