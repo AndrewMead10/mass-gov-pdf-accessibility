@@ -1,0 +1,4 @@
+.venv
+pdfservices-api-credentials.json
+output
+*.pdf
