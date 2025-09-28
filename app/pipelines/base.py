@@ -22,6 +22,7 @@ class PipelineContext:
     page_reports: List[Dict[str, Any]]
     output_dir: str
     metadata: Dict[str, Any] = field(default_factory=dict)
+    db_session: Optional[Any] = None
 
 
 @dataclass(slots=True)

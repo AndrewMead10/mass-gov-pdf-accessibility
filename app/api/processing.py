@@ -193,6 +193,7 @@ def process_pdf_background(document_id: int, db_url: str, credentials_file: str 
                 "source_pdf_path": overall_result.get('source_pdf_path', document.file_path),
                 "page_count": page_count,
             },
+            db_session=db,
         )
 
         manager = PipelineManager(ManagerConfig(attempt_resolve=attempt_resolve))

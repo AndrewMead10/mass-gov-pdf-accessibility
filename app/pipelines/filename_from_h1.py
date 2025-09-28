@@ -22,6 +22,7 @@ from .helpers import (
     suggest_filename_with_openai,
     validate_filename,
 )
+from ..crud import update_document_filename
 
 
 CACHE_BUCKET = "pipeline_cache"
@@ -128,6 +129,14 @@ class FilenameFromHeadingPipeline(BasePipeline):
             counter += 1
 
         shutil.copy2(context.pdf_path, target_path)
+
+        # Update the database filename if we have a database session
+        if context.db_session:
+            update_document_filename(
+                db=context.db_session,
+                document_id=context.document_id,
+                filename=suggested_base,
+            )
 
         cache[CACHE_VALIDATION_KEY]["suggested"] = target_path.name
 
