@@ -26,8 +26,8 @@ from adobe.pdfservices.operation.pdfjobs.jobs.autotag_pdf_job import AutotagPDFJ
 from adobe.pdfservices.operation.pdfjobs.params.autotag_pdf.autotag_pdf_params import AutotagPDFParams
 from adobe.pdfservices.operation.pdfjobs.result.autotag_pdf_result import AutotagPDFResult
 
-# Initialize the logger
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+# Initialize the logger for errors only
+logging.basicConfig(level=logging.ERROR, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 # Load environment variables from .env file
@@ -93,7 +93,7 @@ class PDFAutotagger:
                 autotag_pdf_params=autotag_params
             )
             
-            logger.info(f"Submitting autotagging job for {input_path}...")
+            # Process the job silently
             location = self.pdf_services.submit(autotag_job)
             pdf_services_response = self.pdf_services.get_job_result(location, AutotagPDFResult)
             
@@ -195,9 +195,9 @@ def main():
     
     # Set logging level based on verbosity
     if args.verbose:
-        logger.setLevel(logging.INFO)
+        logger.setLevel(logging.WARNING)  # Show warnings in verbose mode
     else:
-        logger.setLevel(logging.WARNING)
+        logger.setLevel(logging.ERROR)    # Only show errors in normal mode
     
     # Determine input files
     path = Path(args.pdf_path)
