@@ -23,9 +23,6 @@ COPY templates/ ./templates/
 # Create directories for PDF processing
 RUN mkdir -p input_pdfs output_pdfs
 
-# Copy credentials file
-COPY pdfservices-api-credentials.json .
-
 # Expose port
 EXPOSE 8000
 
