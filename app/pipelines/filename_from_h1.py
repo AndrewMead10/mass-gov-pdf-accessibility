@@ -117,6 +117,7 @@ class FilenameFromHeadingPipeline(BasePipeline):
         current_name = metadata.get("current") or Path(context.pdf_path).stem
 
         suggested_base = suggest_filename_with_openai(heading, current_name)
+        print("suggested base ", suggested_base)
         if not suggested_base:
             raise RuntimeError("AI did not return a filename suggestion")
 
